@@ -43,7 +43,8 @@ jobs:
           dry-run: false
 
   binstall:
-    if: startsWith(github.ref, 'refs/tags/')
+    # Run whenever publish ran (even if it failed) so binstall artifacts are never skipped.
+    if: always() && needs.publish.result != 'skipped'
     needs: publish
     runs-on: ${{ matrix.os }}
     strategy:
