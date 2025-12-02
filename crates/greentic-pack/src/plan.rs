@@ -209,6 +209,8 @@ mod tests {
             messaging: None,
             interfaces: Vec::new(),
             annotations: JsonMap::new(),
+            distribution: None,
+            components: Vec::new(),
         };
         let connectors = json!({
             "messaging": {

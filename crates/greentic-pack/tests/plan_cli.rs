@@ -90,6 +90,8 @@ fn build_sample_pack(out_path: &Path) {
         messaging: None,
         interfaces: Vec::new(),
         annotations: serde_json::Map::new(),
+        distribution: None,
+        components: Vec::new(),
     };
     meta.annotations.insert(
         "connectors".into(),

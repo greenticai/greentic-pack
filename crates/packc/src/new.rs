@@ -215,6 +215,8 @@ fn render_pack_spec(id: &str) -> String {
         interfaces: Vec::new(),
         mcp_components: Vec::new(),
         annotations: JsonMap::new(),
+        components: Vec::new(),
+        distribution: None,
     };
     serde_yaml_bw::to_string(&spec).expect("pack spec serialises")
 }
@@ -358,4 +360,4 @@ fn normalize(path: PathBuf) -> PathBuf {
             .join(path)
     }
 }
-use greentic_types::PackKind;
+use greentic_pack::PackKind;

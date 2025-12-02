@@ -38,6 +38,8 @@ fn main() -> anyhow::Result<()> {
         messaging: None,
         interfaces: Vec::new(),
         annotations: Map::new(),
+        distribution: None,
+        components: Vec::new(),
     };
 
     let flow_json = json!({

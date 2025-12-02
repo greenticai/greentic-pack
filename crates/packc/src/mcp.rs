@@ -223,6 +223,8 @@ mod tests {
                 adapter_template: McpComponentSpec::ADAPTER_DEFAULT.into(),
             }],
             annotations: JsonMap::new(),
+            components: Vec::new(),
+            distribution: None,
         };
 
         let specs = crate::manifest::SpecBundle {

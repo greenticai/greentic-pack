@@ -3,11 +3,12 @@ use crate::templates::TemplateAsset;
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use greentic_pack::builder::PACK_VERSION;
+use greentic_pack::PackKind;
+use greentic_pack::builder::{ComponentDescriptor, DistributionSection, PACK_VERSION};
 use greentic_pack::events::EventsSection;
 use greentic_pack::messaging::MessagingSection;
 use greentic_pack::repo::{InterfaceBinding, RepoPackSection};
-use greentic_types::{PackKind, Signature as SharedSignature, SignatureAlgorithm};
+use greentic_types::{Signature as SharedSignature, SignatureAlgorithm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -61,6 +62,10 @@ pub struct PackSpec {
     pub mcp_components: Vec<McpComponentSpec>,
     #[serde(default)]
     pub annotations: JsonMap<String, JsonValue>,
+    #[serde(default)]
+    pub components: Vec<ComponentDescriptor>,
+    #[serde(default)]
+    pub distribution: Option<DistributionSection>,
 }
 
 impl PackSpec {
@@ -78,6 +83,9 @@ impl PackSpec {
         if self.version.trim().is_empty() {
             anyhow::bail!("pack version must not be empty");
         }
+        if let Some(kind) = &self.kind {
+            kind.validate_allowed()?;
+        }
         if let Some(events) = &self.events {
             events.validate()?;
         }
@@ -91,6 +99,8 @@ impl PackSpec {
             binding.validate("interfaces")?;
         }
         McpComponentSpec::validate_all(&self.mcp_components)?;
+        validate_components(&self.components)?;
+        validate_distribution(self.kind.as_ref(), self.distribution.as_ref())?;
         Ok(())
     }
 }
@@ -133,6 +143,10 @@ pub struct PackManifest {
     pub messaging: Option<MessagingSection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_components: Vec<McpComponentManifest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<ComponentDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<DistributionSection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +241,98 @@ pub struct McpComponentManifest {
     pub adapter_template: String,
 }
 
+fn validate_digest(digest: &str) -> Result<()> {
+    if digest.trim().is_empty() {
+        anyhow::bail!("component digest must not be empty");
+    }
+    if !digest.starts_with("sha256:") {
+        anyhow::bail!("component digest must start with sha256:");
+    }
+    Ok(())
+}
+
+fn validate_component_descriptor(component: &ComponentDescriptor) -> Result<()> {
+    if component.component_id.trim().is_empty() {
+        anyhow::bail!("component_id must not be empty");
+    }
+    if component.version.trim().is_empty() {
+        anyhow::bail!("component version must not be empty");
+    }
+    if component.artifact_path.trim().is_empty() {
+        anyhow::bail!("component artifact_path must not be empty");
+    }
+    validate_digest(&component.digest)?;
+    if let Some(kind) = &component.kind
+        && kind.trim().is_empty()
+    {
+        anyhow::bail!("component kind must not be empty when provided");
+    }
+    if let Some(artifact_type) = &component.artifact_type
+        && artifact_type.trim().is_empty()
+    {
+        anyhow::bail!("component artifact_type must not be empty when provided");
+    }
+    if let Some(platform) = &component.platform
+        && platform.trim().is_empty()
+    {
+        anyhow::bail!("component platform must not be empty when provided");
+    }
+    if let Some(entrypoint) = &component.entrypoint
+        && entrypoint.trim().is_empty()
+    {
+        anyhow::bail!("component entrypoint must not be empty when provided");
+    }
+    for tag in &component.tags {
+        if tag.trim().is_empty() {
+            anyhow::bail!("component tags must not contain empty entries");
+        }
+    }
+    Ok(())
+}
+
+fn validate_components(components: &[ComponentDescriptor]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for component in components {
+        validate_component_descriptor(component)?;
+        let key = (component.component_id.clone(), component.version.clone());
+        if !seen.insert(key) {
+            anyhow::bail!("duplicate component entry detected");
+        }
+    }
+    Ok(())
+}
+
+fn validate_distribution(
+    kind: Option<&PackKind>,
+    distribution: Option<&DistributionSection>,
+) -> Result<()> {
+    match (kind, distribution) {
+        (Some(PackKind::DistributionBundle), Some(section)) => {
+            if let Some(bundle_id) = &section.bundle_id
+                && bundle_id.trim().is_empty()
+            {
+                anyhow::bail!("distribution.bundle_id must not be empty when provided");
+            }
+            if section.environment_ref.trim().is_empty() {
+                anyhow::bail!("distribution.environment_ref must not be empty");
+            }
+            if section.desired_state_version.trim().is_empty() {
+                anyhow::bail!("distribution.desired_state_version must not be empty");
+            }
+            validate_components(&section.components)?;
+            validate_components(&section.platform_components)?;
+        }
+        (Some(PackKind::DistributionBundle), None) => {
+            anyhow::bail!("distribution section is required for kind distribution-bundle");
+        }
+        (_, Some(_)) => {
+            anyhow::bail!("distribution section is only allowed when kind is distribution-bundle");
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn build_manifest(
     bundle: &SpecBundle,
     flows: &[FlowAsset],
@@ -279,6 +385,8 @@ pub fn build_manifest(
         repo: bundle.spec.repo.clone(),
         messaging: bundle.spec.messaging.clone(),
         mcp_components: mcp_entries,
+        components: bundle.spec.components.clone(),
+        distribution: bundle.spec.distribution.clone(),
     }
 }
 
@@ -534,6 +642,8 @@ mod tests {
                 adapter_template: McpComponentSpec::ADAPTER_DEFAULT.into(),
             }],
             annotations: JsonMap::new(),
+            components: Vec::new(),
+            distribution: None,
         };
         let bundle = SpecBundle {
             spec,
@@ -545,5 +655,68 @@ mod tests {
             manifest.mcp_components[0].protocol,
             McpComponentSpec::PROTOCOL_25_06_18
         );
+    }
+
+    #[test]
+    fn distribution_bundle_with_distribution_section_validates() {
+        let spec = PackSpec {
+            pack_version: PACK_VERSION,
+            id: "bundle.pack".into(),
+            version: "0.1.0".into(),
+            kind: Some(PackKind::DistributionBundle),
+            name: None,
+            description: None,
+            authors: Vec::new(),
+            license: None,
+            homepage: None,
+            support: None,
+            vendor: None,
+            flow_files: Vec::new(),
+            template_dirs: Vec::new(),
+            entry_flows: Vec::new(),
+            imports_required: Vec::new(),
+            events: None,
+            repo: None,
+            messaging: None,
+            interfaces: Vec::new(),
+            mcp_components: Vec::new(),
+            annotations: JsonMap::new(),
+            components: Vec::new(),
+            distribution: Some(DistributionSection {
+                bundle_id: Some("bundle-123".into()),
+                tenant: JsonMap::new(),
+                environment_ref: "env-prod".into(),
+                desired_state_version: "v1".into(),
+                components: vec![ComponentDescriptor {
+                    component_id: "comp.a".into(),
+                    version: "1.0.0".into(),
+                    digest: "sha256:abc".into(),
+                    artifact_path: "artifacts/comp.a".into(),
+                    kind: Some("software".into()),
+                    artifact_type: Some("binary/linux-x86_64".into()),
+                    tags: vec!["runner-dependency".into()],
+                    platform: None,
+                    entrypoint: Some("install.sh".into()),
+                }],
+                platform_components: Vec::new(),
+            }),
+        };
+        spec.validate().expect("distribution bundle validates");
+    }
+
+    #[test]
+    fn software_component_descriptor_validates() {
+        let components = vec![ComponentDescriptor {
+            component_id: "install.demo".into(),
+            version: "1.2.3".into(),
+            digest: "sha256:def".into(),
+            artifact_path: "artifacts/demo.bin".into(),
+            kind: Some("software".into()),
+            artifact_type: Some("binary/linux-x86_64".into()),
+            tags: vec!["platform".into(), "runner-dependency".into()],
+            platform: Some("linux-x86_64".into()),
+            entrypoint: Some("install.sh".into()),
+        }];
+        validate_components(&components).expect("components validate");
     }
 }

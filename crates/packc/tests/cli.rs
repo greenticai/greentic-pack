@@ -484,3 +484,50 @@ fn set_pack_version(pack_dir: &std::path::Path, version: u32) {
     }
     fs::write(&path, lines.join("\n") + "\n").expect("write pack.yaml with packVersion");
 }
+
+#[test]
+fn lint_accepts_distribution_bundle_with_software_component() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let pack_dir = temp.path().join("bundle-pack");
+    std::fs::create_dir_all(&pack_dir).expect("create pack dir");
+
+    let manifest = r#"packVersion: 1
+id: greentic.bundle.demo
+version: 0.1.0
+kind: distribution-bundle
+entry_flows: []
+flow_files: []
+components:
+  - component_id: install.app
+    version: 1.2.3
+    digest: sha256:deadbeef
+    artifact_path: artifacts/app.bin
+    kind: software
+    artifact_type: binary/linux-x86_64
+distribution:
+  bundle_id: bundle-123
+  tenant: {}
+  environment_ref: env-prod
+  desired_state_version: v1
+  components:
+    - component_id: install.app
+      version: 1.2.3
+      digest: sha256:deadbeef
+      artifact_path: artifacts/app.bin
+      kind: software
+      artifact_type: binary/linux-x86_64
+"#;
+    std::fs::write(pack_dir.join("pack.yaml"), manifest).expect("write manifest");
+
+    let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin!("packc"));
+    cmd.current_dir(workspace_root());
+    cmd.args([
+        "build",
+        "--in",
+        pack_dir.to_str().unwrap(),
+        "--dry-run",
+        "--log",
+        "warn",
+    ]);
+    cmd.assert().success();
+}

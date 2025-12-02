@@ -14,6 +14,7 @@ use pkcs8::EncodePrivateKey;
 use rand_core_06::OsRng;
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ED25519};
 use rustls_pki_types::PrivatePkcs8KeyDer;
+use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -23,9 +24,9 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime as ZipDateTime, ZipWriter};
 
 use crate::events::EventsSection;
+use crate::kind::PackKind;
 use crate::messaging::MessagingSection;
 use crate::repo::{InterfaceBinding, RepoPackSection};
-use greentic_types::PackKind;
 
 pub(crate) const SBOM_FORMAT: &str = "greentic-sbom-v1";
 pub(crate) const SIGNATURE_PATH: &str = "signatures/pack.sig";
@@ -71,6 +72,10 @@ pub struct PackMeta {
     pub interfaces: Vec<InterfaceBinding>,
     #[serde(default)]
     pub annotations: JsonMap<String, JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<DistributionSection>,
+    #[serde(default)]
+    pub components: Vec<ComponentDescriptor>,
 }
 
 impl PackMeta {
@@ -94,6 +99,9 @@ impl PackMeta {
         if self.created_at_utc.trim().is_empty() {
             bail!("created_at_utc is required");
         }
+        if let Some(kind) = &self.kind {
+            kind.validate_allowed()?;
+        }
         if let Some(events) = &self.events {
             events.validate()?;
         }
@@ -106,6 +114,8 @@ impl PackMeta {
         for binding in &self.interfaces {
             binding.validate("interfaces")?;
         }
+        validate_distribution(self.kind.as_ref(), self.distribution.as_ref())?;
+        validate_components(&self.components)?;
         Ok(())
     }
 }
@@ -116,6 +126,38 @@ pub use greentic_flow::flow_bundle::{ComponentPin, FlowBundle, NodeRef};
 pub struct ImportRef {
     pub pack_id: String,
     pub version_req: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ComponentDescriptor {
+    pub component_id: String,
+    pub version: String,
+    pub digest: String,
+    pub artifact_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct DistributionSection {
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub tenant: JsonMap<String, JsonValue>,
+    pub environment_ref: String,
+    pub desired_state_version: String,
+    #[serde(default)]
+    pub components: Vec<ComponentDescriptor>,
+    #[serde(default)]
+    pub platform_components: Vec<ComponentDescriptor>,
 }
 
 #[derive(Clone, Debug)]
@@ -174,6 +216,8 @@ pub struct PackBuilder {
     assets: Vec<Asset>,
     signing: Signing,
     provenance: Option<Provenance>,
+    component_descriptors: Vec<ComponentDescriptor>,
+    distribution: Option<DistributionSection>,
 }
 
 struct Asset {
@@ -201,6 +245,10 @@ pub struct PackManifest {
     pub meta: PackMeta,
     pub flows: Vec<FlowEntry>,
     pub components: Vec<ComponentEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<DistributionSection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub component_descriptors: Vec<ComponentDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,6 +330,8 @@ impl PendingFile {
 impl PackBuilder {
     pub fn new(meta: PackMeta) -> Self {
         Self {
+            component_descriptors: meta.components.clone(),
+            distribution: meta.distribution.clone(),
             meta,
             flows: Vec::new(),
             components: Vec::new(),
@@ -337,9 +387,28 @@ impl PackBuilder {
         self
     }
 
+    pub fn with_component_descriptors(
+        mut self,
+        descriptors: impl IntoIterator<Item = ComponentDescriptor>,
+    ) -> Self {
+        self.component_descriptors.extend(descriptors);
+        self
+    }
+
+    pub fn with_distribution(mut self, distribution: DistributionSection) -> Self {
+        self.distribution = Some(distribution);
+        self
+    }
+
     pub fn build(self, out_path: impl AsRef<Path>) -> Result<BuildResult> {
         let meta = self.meta;
         meta.validate()?;
+        let distribution = self.distribution.or_else(|| meta.distribution.clone());
+        let component_descriptors = if self.component_descriptors.is_empty() {
+            meta.components.clone()
+        } else {
+            self.component_descriptors.clone()
+        };
 
         if self.flows.is_empty() {
             bail!("at least one flow must be provided");
@@ -478,6 +547,8 @@ impl PackBuilder {
             meta: meta.clone(),
             flows: flow_entries,
             components: component_entries,
+            distribution,
+            component_descriptors,
         };
 
         let manifest_cbor = encode_manifest_cbor(&manifest_model)?;
@@ -614,6 +685,98 @@ fn encode_manifest_cbor(manifest: &PackManifest) -> Result<Vec<u8>> {
         manifest.serialize(&mut serializer)?;
     }
     Ok(buffer)
+}
+
+fn validate_digest(digest: &str) -> Result<()> {
+    if digest.trim().is_empty() {
+        bail!("component digest must not be empty");
+    }
+    if !digest.starts_with("sha256:") {
+        bail!("component digest must start with sha256:");
+    }
+    Ok(())
+}
+
+fn validate_component_descriptor(component: &ComponentDescriptor) -> Result<()> {
+    if component.component_id.trim().is_empty() {
+        bail!("component_id must not be empty");
+    }
+    if component.version.trim().is_empty() {
+        bail!("component version must not be empty");
+    }
+    if component.artifact_path.trim().is_empty() {
+        bail!("component artifact_path must not be empty");
+    }
+    validate_digest(&component.digest)?;
+    if let Some(kind) = &component.kind
+        && kind.trim().is_empty()
+    {
+        bail!("component kind must not be empty when provided");
+    }
+    if let Some(artifact_type) = &component.artifact_type
+        && artifact_type.trim().is_empty()
+    {
+        bail!("component artifact_type must not be empty when provided");
+    }
+    if let Some(platform) = &component.platform
+        && platform.trim().is_empty()
+    {
+        bail!("component platform must not be empty when provided");
+    }
+    if let Some(entrypoint) = &component.entrypoint
+        && entrypoint.trim().is_empty()
+    {
+        bail!("component entrypoint must not be empty when provided");
+    }
+    for tag in &component.tags {
+        if tag.trim().is_empty() {
+            bail!("component tags must not contain empty entries");
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_components(components: &[ComponentDescriptor]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for component in components {
+        validate_component_descriptor(component)?;
+        let key = (component.component_id.clone(), component.version.clone());
+        if !seen.insert(key) {
+            bail!("duplicate component entry detected");
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_distribution(
+    kind: Option<&PackKind>,
+    distribution: Option<&DistributionSection>,
+) -> Result<()> {
+    match (kind, distribution) {
+        (Some(PackKind::DistributionBundle), Some(section)) => {
+            if let Some(bundle_id) = &section.bundle_id
+                && bundle_id.trim().is_empty()
+            {
+                bail!("distribution.bundle_id must not be empty when provided");
+            }
+            if section.environment_ref.trim().is_empty() {
+                bail!("distribution.environment_ref must not be empty");
+            }
+            if section.desired_state_version.trim().is_empty() {
+                bail!("distribution.desired_state_version must not be empty");
+            }
+            validate_components(&section.components)?;
+            validate_components(&section.platform_components)?;
+        }
+        (Some(PackKind::DistributionBundle), None) => {
+            bail!("distribution section is required for kind distribution-bundle");
+        }
+        (_, Some(_)) => {
+            bail!("distribution section is only allowed when kind is distribution-bundle");
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn finalize_provenance(provenance: Option<Provenance>) -> Provenance {
@@ -852,6 +1015,8 @@ mod tests {
             messaging: None,
             interfaces: Vec::new(),
             annotations: JsonMap::new(),
+            distribution: None,
+            components: Vec::new(),
         }
     }
 

@@ -224,6 +224,8 @@ fn maybe_build_gtpack(
         messaging: spec_bundle.spec.messaging.clone(),
         interfaces: spec_bundle.spec.interfaces.clone(),
         annotations,
+        distribution: spec_bundle.spec.distribution.clone(),
+        components: spec_bundle.spec.components.clone(),
     };
 
     let mut builder = PackBuilder::new(meta);

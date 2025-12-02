@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1930,7 +1930,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -1940,11 +1940,11 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.11"
+version = "0.4.12"
 
 [[package]]
 name = "packc"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "assert_cmd",

@@ -66,6 +66,58 @@ fingerprint. The digest covers:
 ephemeral Ed25519 key and a single self-signed certificate with
 `CN=greentic-dev-local`. Production builds should bundle the full trust chain.
 
+## Pack kinds
+
+Supported `kind` values include:
+
+- `application`
+- `source-provider`
+- `scanner`
+- `signing`
+- `attestation`
+- `policy-engine`
+- `oci-provider`
+- `billing-provider`
+- `search-provider`
+- `recommendation-provider`
+- `distribution-bundle` (offline bundle GT pack)
+
+`rollout-strategy` remains reserved for future phases and must not be used.
+
+### Distribution bundles
+
+Use `kind: distribution-bundle` with a `distribution` section:
+
+```yaml
+kind: distribution-bundle
+distribution:
+  bundle_id: bundle-123          # optional; defaults to pack id if omitted
+  tenant: {}                     # opaque JSON map; conventionally serialized TenantCtx
+  environment_ref: env-prod
+  desired_state_version: v1
+  components:
+    - component_id: app.component
+      version: 1.0.0
+      digest: sha256:deadbeef
+      artifact_path: artifacts/app.component.wasm
+      kind: software
+      artifact_type: binary/linux-x86_64
+      tags: [runner-dependency]
+      platform: linux-x86_64
+      entrypoint: install.sh
+  platform_components:
+    - component_id: greentic-runner
+      version: 1.2.3
+      digest: sha256:cafebabe
+      artifact_path: artifacts/runner.wasm
+```
+
+`tenant` is validated only as a JSON object; downstream tooling interprets it as a serialized TenantCtx.
+
+### Component descriptors and software installs
+
+Components may carry an optional `kind` (e.g. `software`), optional `artifact_type` hint, `tags`, `platform`, and `entrypoint`. `artifact_path` is a generic path inside the `.gtpack`; the pack format does not assume WASM. Downstream tooling decides how to execute or install.
+
 ## Verification Semantics
 
 `open_pack(path, policy)` reads the archive, enforces size limits, rejects

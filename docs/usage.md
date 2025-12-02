@@ -204,6 +204,11 @@ respond_to_user:
 The runner preserves order, sending each entry to the channel sequentially.
 See `examples/qa-demo` for a complete pack that combines all three patterns.
 
+## Distribution bundles and software components
+
+- Use `kind: distribution-bundle` when producing offline bundles; include a `distribution` section with `bundle_id` (optional), `tenant` (opaque JSON map, conventionally serialized TenantCtx), `environment_ref`, `desired_state_version`, `components`, and optional `platform_components`.
+- Components may carry `kind: software` plus optional `artifact_type`/`tags`/`platform`/`entrypoint`; `artifact_path` is a generic path inside the `.gtpack`. The pack tooling does not assume WASM—downstream tools decide how to execute or install.
+
 ## Component integration
 
 The generated `pack_component` crate exposes helper functions for host runtimes

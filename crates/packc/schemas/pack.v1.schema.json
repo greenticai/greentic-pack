@@ -76,7 +76,21 @@
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "enum": [
+        "application",
+        "source-provider",
+        "scanner",
+        "signing",
+        "attestation",
+        "policy-engine",
+        "oci-provider",
+        "billing-provider",
+        "search-provider",
+        "recommendation-provider",
+        "distribution-bundle",
+        "rollout-strategy"
+      ]
     },
     "license": {
       "type": [
@@ -149,6 +163,24 @@
     },
     "version": {
       "type": "string"
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ComponentDescriptor"
+      },
+      "default": []
+    },
+    "distribution": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DistributionSection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [
@@ -606,6 +638,106 @@
           "type": "string"
         }
       ]
+    },
+    "ComponentDescriptor": {
+      "type": "object",
+      "properties": {
+        "component_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "artifact_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "artifact_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "platform": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "entrypoint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "component_id",
+        "version",
+        "digest",
+        "artifact_path"
+      ],
+      "additionalProperties": false
+    },
+    "DistributionSection": {
+      "type": "object",
+      "properties": {
+        "bundle_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tenant": {
+          "type": "object",
+          "default": {}
+        },
+        "environment_ref": {
+          "type": "string"
+        },
+        "desired_state_version": {
+          "type": "string"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentDescriptor"
+          },
+          "default": []
+        },
+        "platform_components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentDescriptor"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "environment_ref",
+        "desired_state_version"
+      ],
+      "additionalProperties": false
     }
   }
 }

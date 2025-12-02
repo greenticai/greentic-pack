@@ -525,6 +525,8 @@ mod tests {
             messaging: None,
             interfaces: Vec::new(),
             annotations: Map::new(),
+            distribution: None,
+            components: Vec::new(),
         }
     }
 

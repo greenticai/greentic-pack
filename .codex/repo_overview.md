@@ -7,11 +7,11 @@
 ## 2. Main Components and Functionality
 - **Path:** `crates/packc`  
   **Role:** Builder CLI for authoring and validating Greentic packs.  
-  **Key functionality:** Validates `pack.yaml`, enforces pack version/kind constraints, loads flow and template assets, builds `.gtpack` archives with manifests and SBOM entries, generates Wasm components via `pack_component_template`, composes MCP router + adapter components, and supports signing/verification of manifests. Provides `packc build`, `packc new` scaffolding, `packc sign/verify`, and telemetry setup; exposes library helpers (`BuildArgs`, signing APIs).
+  **Key functionality:** Validates `pack.yaml`, enforces pack version/kind constraints (including `distribution-bundle`), loads flow and template assets, builds `.gtpack` archives with manifests and SBOM entries, generates Wasm components via `pack_component_template`, composes MCP router + adapter components, supports component descriptors (including `kind: software` with arbitrary artifact paths/types), and handles signing/verification of manifests. Provides `packc build`, `packc new` scaffolding, `packc sign/verify`, and telemetry setup; exposes library helpers (`BuildArgs`, signing APIs).
 
 - **Path:** `crates/greentic-pack`  
   **Role:** Library + CLI for inspecting packs and producing deployment plans.  
-  **Key functionality:** `reader` parses `.gtpack` archives, verifies hashes/signatures, and exposes manifest contents; `plan` builds deployment plans (optionally shelling out to `packc` when given a source directory); `builder` defines pack metadata, SBOM entries, signing helpers, and archive writing; `events`/`messaging`/`repo` schemas validate sections. CLI commands: `inspect` (signature policy + JSON), `plan` (plan generation), and `events list` (providers).
+  **Key functionality:** `reader` parses `.gtpack` archives, verifies hashes/signatures, and exposes manifest contents; `plan` builds deployment plans (optionally shelling out to `packc` when given a source directory); `builder` defines pack metadata (now includes `distribution-bundle` kind, distribution section, and component descriptors with optional `software` kind/`artifact_type` labels), SBOM entries, signing helpers, and archive writing; `events`/`messaging`/`repo` schemas validate sections. CLI commands: `inspect` (signature policy + JSON), `plan` (plan generation), and `events list` (providers).
 
 - **Path:** `crates/pack_component`  
   **Role:** Generated Wasm component that embeds manifest, flows, and templates produced by `packc`.  
