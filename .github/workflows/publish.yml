@@ -74,13 +74,11 @@ jobs:
           mkdir -p dist
           tar -czf "dist/greentic-pack-${{ matrix.target }}.tgz" -C "${out_dir}" greentic-pack gtpack-inspect
       - name: Upload binstall artifacts to GitHub Release
-        uses: taiki-e/upload-rust-binary-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          manifest-path: crates/greentic-pack/Cargo.toml
-          bin: greentic-pack,gtpack-inspect
-          target: ${{ matrix.target }}
-          build-tool: binstall
-          archive: tgz
-          tag: ${{ github.ref_name }}
-          ref: refs/tags/${{ github.ref_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          files: dist/greentic-pack-${{ matrix.target }}.tgz
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
