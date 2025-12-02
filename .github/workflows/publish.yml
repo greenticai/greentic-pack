@@ -63,9 +63,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - name: Build and upload binstall artifacts (tags)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build and upload binstall artifacts (release/upload if possible)
         uses: taiki-e/upload-rust-binary-action@v1
+        continue-on-error: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           manifest-path: crates/greentic-pack/Cargo.toml
           bin: greentic-pack,gtpack-inspect
@@ -80,8 +80,7 @@ jobs:
           out_dir="target/${{ matrix.target }}/release"
           mkdir -p dist
           tar -czf "dist/greentic-pack-${{ matrix.target }}.tgz" -C "${out_dir}" greentic-pack gtpack-inspect
-      - name: Upload binstall artifacts (non-tag artifact)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload binstall artifacts (always)
         uses: actions/upload-artifact@v4
         with:
           name: binstall-${{ matrix.target }}-${{ github.run_id }}
