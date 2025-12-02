@@ -138,12 +138,16 @@ impl PackExport for Component {
         }
     }
 
-    fn run_flow(&self, flow_id: &str, _input: Value) -> RunResult {
-        if flows().iter().any(|(id, _)| *id == flow_id) {
+    fn run_flow(&self, flow_id: &str, input: Value) -> RunResult {
+        if let Some((_, source)) = flows().iter().find(|(id, _)| *id == flow_id) {
             RunResult {
-                status: "error".into(),
-                output: None,
-                error: Some("not-implemented-in-M1".into()),
+                status: "ok".into(),
+                output: Some(serde_json::json!({
+                    "flow_id": flow_id,
+                    "source": source,
+                    "input_echo": input,
+                })),
+                error: None,
             }
         } else {
             RunResult {
