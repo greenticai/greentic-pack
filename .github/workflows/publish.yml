@@ -66,6 +66,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      - name: Derive release tag and title from commit message
+        run: |
+          msg="${{ github.event.head_commit.message || 'release' }}"
+          # Sanitize tag: replace spaces/slashes with dashes to keep it ref-safe.
+          safe_tag=$(printf '%s' "$msg" | tr ' /' '--')
+          if [ -z "$safe_tag" ]; then
+            safe_tag="release-${GITHUB_SHA::7}"
+          fi
+          echo "RELEASE_TAG=$safe_tag" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=$msg" >> "$GITHUB_ENV"
       - name: Build binstall artifacts
         run: |
           set -euo pipefail
@@ -77,7 +87,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/greentic-pack-${{ matrix.target }}.tgz
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TITLE }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
         env:
