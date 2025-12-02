@@ -63,7 +63,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Build and upload binstall artifacts
-        if: startsWith(github.ref, 'refs/tags/')
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           manifest-path: crates/greentic-pack/Cargo.toml
@@ -71,7 +70,5 @@ jobs:
           target: ${{ matrix.target }}
           build-tool: binstall
           archive: tgz
+          ref: ${{ github.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Skip binstall upload for non-tag push
-        if: github.ref == 'refs/heads/master'
-        run: echo "Non-tag push on master; skipping binstall release upload."
