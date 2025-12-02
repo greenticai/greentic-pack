@@ -24,7 +24,7 @@
   **Role:** Usage guides (CLI, publishing, pack format) and sample packs demonstrating pack structure and flows; examples include weather, QA, billing, search, and recommendation demos.
 
 - **Path:** `.github/workflows/`  
-  **Role:** CI for lint/test, publishing to crates.io, and binstall release artifacts; master pushes run CI only, while tag pushes (`v*`/`greentic-pack-v*`) build binstall archives (`.tgz`), publish crates, and create GitHub Releases.
+  **Role:** CI for lint/test, publishing to crates.io, and binstall release artifacts; pushes to `master` (or manual dispatch) run CI, publish crates, build binstall archives (`.tgz`), and upload them to a GitHub Release—no tag gating.
 
 ## 3. Work In Progress, TODOs, and Stubs
 - None identified in the current snapshot.
