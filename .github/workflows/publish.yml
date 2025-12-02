@@ -1,6 +1,7 @@
 name: Publish crates (single or workspace)
 
 on:
+  # Any push to master (or manual dispatch) runs CI + publish + release; no tag triggers or tag gating.
   push:
     branches: [ master ]
   workflow_dispatch: {}
@@ -80,5 +81,6 @@ jobs:
           target: ${{ matrix.target }}
           build-tool: binstall
           archive: tgz
-          ref: ${{ github.ref }}
+          tag: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
