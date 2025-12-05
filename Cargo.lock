@@ -864,13 +864,13 @@ checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
 
 [[package]]
 name = "flate2"
-version = "1.1.5"
+version = "1.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfe33edd8e85a12a67454e37f8c75e730830d83e313556ab9ebf9ee7fbeb3bfb"
+checksum = "a2152dbcb980c05735e2a651d96011320a949eb31a0c8b38b72645ce97dec676"
 dependencies = [
  "crc32fast",
- "libz-rs-sys",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -1079,9 +1079,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.47"
+version = "0.4.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "245ff6c51f73658298fe77847da66d384ecbaa45419426b8c32ad88d3371da32"
+checksum = "11df4af487223a6b5b514737872ac3f4e829e1172dfc6ecc3bfbead486fcc953"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1096,9 +1096,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.47"
+version = "0.4.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d7f3bf19421015da4838a19e74a2c03d57174bac5f7da48d6904c22727ea473"
+checksum = "98437b924bf1da4e2c042c8957ae9ef2805eb813fb0a404e0946c0b62c5753dd"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.13"
+version = "0.4.14"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1157,9 +1157,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "0.4.11"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ccf0dcc42157400a643b90e359f1b37e5a5f1f3f5887075eec7bc6ace34ba3"
+checksum = "bda032f384a300decec49cde8bdff585e7fabf1bb6e5ed16118be03bb9fed209"
 dependencies = [
  "chrono",
  "fnv",
@@ -1180,9 +1180,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types-macros"
-version = "0.4.11"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "784fabd9fad97f25e4816b35a4f2aae46752a8c156d0dff1eba3aac6e1aada09"
+checksum = "6152c3b27fb4a4eb0d450ffe1e8992c4a011864909bc7575f19453c261bd6950"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1341,9 +1341,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52e9a2a24dc5c6821e71a7030e1e14b7b632acac55c40e9d2e082c621261bb56"
+checksum = "727805d60e7938b76b826a6ef209eb70eaa1812794f9424d4a4e2d740662df5f"
 dependencies = [
  "base64",
  "bytes",
@@ -1603,24 +1603,15 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.177"
+version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libm"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
-
-[[package]]
-name = "libz-rs-sys"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "840db8cf39d9ec4dd794376f38acc40d0fc65eec2a8f484f7fd375b84602becd"
-dependencies = [
- "zlib-rs",
-]
 
 [[package]]
 name = "linux-raw-sys"
@@ -1645,9 +1636,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "mach2"
@@ -1700,9 +1691,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69d83b0086dc8ecf3ce9ae2874b2d1290252e2a30720bea58a5c6639b0092873"
+checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
 dependencies = [
  "libc",
  "wasi",
@@ -1930,7 +1921,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.13"
+version = "0.4.14"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -1940,11 +1931,11 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.13"
+version = "0.4.14"
 
 [[package]]
 name = "packc"
-version = "0.4.13"
+version = "0.4.14"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -4120,9 +4111,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f06ae92f42f5e5c42443fd094f245eb656abf56dd7cce9b8b263236565e00f2"
+checksum = "36134c44663532e6519d7a6dfdbbe06f6f8192bde8ae9ed076e9b213f0e31df7"
 
 [[package]]
 name = "zopfli"

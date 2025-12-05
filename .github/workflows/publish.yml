@@ -66,25 +66,22 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - name: Derive release tag and title from commit message
-        env:
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
-          REF_NAME: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+      - name: Derive release tag and title from workspace version
         run: |
-          msg="${HEAD_MESSAGE:-}"
-          # Collapse newlines/whitespace; fall back to ref name or sha if empty.
-          msg=$(printf '%s' "$msg" | tr '\r\n' ' ' | sed 's/[[:space:]]\+/ /g')
-          if [ -z "$msg" ]; then
-            msg="${REF_NAME:-release}-${SHA:0:7}"
-          fi
-          # Sanitize tag: replace unsafe chars; avoid literal 'master'.
-          safe_tag=$(printf '%s' "$msg" | tr ' /:@' '----')
-          if [ -z "$safe_tag" ] || [ "$safe_tag" = "master" ]; then
-            safe_tag="release-${SHA:0:7}"
-          fi
-          printf 'RELEASE_TAG=%s\n' "$safe_tag" >> "$GITHUB_ENV"
-          printf 'RELEASE_TITLE=%s\n' "$msg" >> "$GITHUB_ENV"
+          set -euo pipefail
+          version=$(python3 - <<'PY'
+import pathlib, tomllib
+root = pathlib.Path(__file__).resolve().parents[2]  # repo root
+data = tomllib.loads(root.joinpath("Cargo.toml").read_text())
+version = data.get("workspace", {}).get("package", {}).get("version")
+if not version:
+    raise SystemExit("workspace.package.version missing")
+print(version)
+PY
+)
+          tag="v${version}"
+          echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=${tag}" >> "$GITHUB_ENV"
       - name: Build binstall artifacts
         run: |
           set -euo pipefail
