@@ -123,8 +123,8 @@ fn scaffold_build_script_uses_pack_id() {
     ]);
     scaffold.assert().success();
 
-    let build_script =
-        fs::read_to_string(pack_dir.join("scripts").join("build.sh")).expect("build script present");
+    let build_script = fs::read_to_string(pack_dir.join("scripts").join("build.sh"))
+        .expect("build script present");
     assert!(
         build_script.contains("dist/demo-pack.wasm"),
         "build script should emit wasm named after pack id"
