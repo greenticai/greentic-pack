@@ -73,6 +73,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
       - name: Derive release tag and title from workspace version
         run: |
           set -euo pipefail
