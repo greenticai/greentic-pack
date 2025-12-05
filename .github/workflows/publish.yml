@@ -71,8 +71,10 @@ jobs:
           set -euo pipefail
           version=$(python3 - <<'PY'
           import pathlib, tomllib, sys
-          root = pathlib.Path(__file__).resolve().parents[2]  # repo root
-          data = tomllib.loads(root.joinpath("Cargo.toml").read_text())
+          cargo_toml = pathlib.Path("Cargo.toml")
+          if not cargo_toml.exists():
+              sys.exit("Cargo.toml not found at workspace root")
+          data = tomllib.loads(cargo_toml.read_text())
           v = data.get("workspace", {}).get("package", {}).get("version")
           if not v:
               sys.exit("workspace.package.version missing")
