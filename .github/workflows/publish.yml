@@ -70,14 +70,14 @@ jobs:
         run: |
           set -euo pipefail
           version=$(python3 - <<'PY'
-            import pathlib, tomllib
-            root = pathlib.Path(__file__).resolve().parents[2]  # repo root
-            data = tomllib.loads(root.joinpath("Cargo.toml").read_text())
-            version = data.get("workspace", {}).get("package", {}).get("version")
-            if not version:
-                raise SystemExit("workspace.package.version missing")
-            print(version)
-          PY
+import pathlib, tomllib
+root = pathlib.Path(__file__).resolve().parents[2]  # repo root
+data = tomllib.loads(root.joinpath("Cargo.toml").read_text())
+version = data.get("workspace", {}).get("package", {}).get("version")
+if not version:
+    raise SystemExit("workspace.package.version missing")
+print(version)
+PY
           )
           tag="v${version}"
           echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
