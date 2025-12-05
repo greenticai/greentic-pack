@@ -1,1 +1,0 @@
-/Users/maarten/Documents/GitHub/agentic/greentic-pack/examples/weather-demo/.packc/pack_component/target/wasm32-wasip2/release/pack_component.wasm: /Users/maarten/Documents/GitHub/agentic/greentic-pack/examples/weather-demo/.packc/pack_component/src/data.rs /Users/maarten/Documents/GitHub/agentic/greentic-pack/examples/weather-demo/.packc/pack_component/src/lib.rs
