@@ -1,12 +1,46 @@
-packVersion: 1
-id: greentic.qa.demo
+pack_id: greentic.qa.demo
 version: 0.1.0
-flow_files:
-  - flows/qa_orchestrator.ygtc
-  - flows/qa_answer_flow.ygtc
-imports_required:
-  - qa.process
-  - flow.call
-  - llm.openai.chat
-  - messaging.emit
-  - state.get
+kind: application
+publisher: Greentic
+
+components: []
+
+flows:
+  - id: qa_orchestrator
+    file: flows/qa_orchestrator.ygtc
+    tags: [default]
+    entrypoints: [default]
+  - id: qa_answer_flow
+    file: flows/qa_answer_flow.ygtc
+    tags: [answer]
+    entrypoints: [default]
+
+dependencies:
+  - alias: "qa"
+    pack_id: "io.3bridges.components.qa"
+    version_req: "^1.0.0"
+    required_capabilities:
+      - "qa:process"
+  - alias: "state"
+    pack_id: "io.3bridges.components.state"
+    version_req: "^1.0.0"
+    required_capabilities:
+      - "state:get"
+  - alias: "flow"
+    pack_id: "io.3bridges.components.flow"
+    version_req: "^1.0.0"
+    required_capabilities:
+      - "flow:call"
+      - "flow:return"
+  - alias: "messaging"
+    pack_id: "io.3bridges.components.messaging"
+    version_req: "^1.0.0"
+    required_capabilities:
+      - "messaging:emit"
+  - alias: "llm"
+    pack_id: "io.3bridges.components.llm.openai"
+    version_req: "^1.0.0"
+    required_capabilities:
+      - "llm:openai:chat"
+
+assets: []

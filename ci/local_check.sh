@@ -128,21 +128,24 @@ packc_gtpack_check() {
     return 0
   fi
 
-  local tmpdir
-  tmpdir=$(mktemp -d)
+  local pack_dir="examples/weather-demo"
+  local tmpdir_rel=".packc-check"
+  local tmpdir="$pack_dir/$tmpdir_rel"
+  rm -rf "$tmpdir"
+  mkdir -p "$tmpdir"
   trap "rm -rf '$tmpdir'" RETURN
-  local wasm="$tmpdir/pack.wasm"
-  local manifest="$tmpdir/manifest.cbor"
-  local sbom="$tmpdir/sbom.cdx.json"
-  local gtpack="$tmpdir/pack.gtpack"
+  local out_wasm="$tmpdir_rel/pack.wasm"
+  local out_manifest="$tmpdir_rel/manifest.cbor"
+  local out_sbom="$tmpdir_rel/sbom.cdx.json"
+  local out_gtpack="$tmpdir_rel/pack.gtpack"
 
   local build_log="$tmpdir/packc-build.log"
   if ! cargo run -p packc --bin packc -- build \
-    --in examples/weather-demo \
-    --out "$wasm" \
-    --manifest "$manifest" \
-    --sbom "$sbom" \
-    --gtpack-out "$gtpack" \
+    --in "$pack_dir" \
+    --out "$out_wasm" \
+    --manifest "$out_manifest" \
+    --sbom "$out_sbom" \
+    --gtpack-out "$out_gtpack" \
     --log warn \
     >"$build_log" 2>&1; then
     if grep -q "Couldn't resolve host name" "$build_log"; then
@@ -154,7 +157,7 @@ packc_gtpack_check() {
   fi
 
   local report
-  report=$(cargo run -p greentic-pack --bin gtpack-inspect -- --policy devok --json "$gtpack")
+  report=$(cargo run -p greentic-pack --bin gtpack-inspect -- --policy devok --json "$pack_dir/$out_gtpack")
   echo "$report" | jq -e 'has("sbom") and (all(.sbom[]; (.media_type | length > 0)))' >/dev/null
 }
 

@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use serde_json::json;
+use greentic_flow::compile_ygtc_str;
 use tracing::info;
 
-use crate::{flows, manifest, templates};
+use crate::config::load_pack_config;
 
 #[derive(Debug, Parser)]
 pub struct LintArgs {
@@ -20,37 +20,35 @@ pub fn handle(args: LintArgs, json: bool) -> Result<()> {
     let pack_dir = normalize(args.input);
     info!(path = %pack_dir.display(), "linting pack");
 
-    let spec_bundle = manifest::load_spec(&pack_dir)?;
-    let flows = flows::load_flows(&pack_dir, &spec_bundle.spec)?;
-    let templates = templates::collect_templates(&pack_dir, &spec_bundle.spec)?;
-    let events = spec_bundle
-        .spec
-        .events
-        .as_ref()
-        .map(|section| section.providers.len())
-        .unwrap_or(0);
+    let cfg = load_pack_config(&pack_dir)?;
 
-    // Building the manifest ensures flow/template metadata is well-formed.
-    let _manifest = manifest::build_manifest(&spec_bundle, &flows, &templates);
+    let mut compiled = 0usize;
+    for flow in &cfg.flows {
+        let src = std::fs::read_to_string(&flow.file)?;
+        compile_ygtc_str(&src)?;
+        compiled += 1;
+    }
 
     if json {
-        let payload = json!({
-            "status": "ok",
-            "pack_id": spec_bundle.spec.id,
-            "version": spec_bundle.spec.version,
-            "flows": flows.len(),
-            "templates": templates.len(),
-            "events_providers": events,
-        });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "pack_id": cfg.pack_id,
+                "version": cfg.version,
+                "flows": compiled,
+                "components": cfg.components.len(),
+                "dependencies": cfg.dependencies.len(),
+            }))?
+        );
     } else {
         println!(
-            "lint ok\n  pack: {}@{}\n  flows: {}\n  templates: {}\n  events.providers: {}",
-            spec_bundle.spec.id,
-            spec_bundle.spec.version,
-            flows.len(),
-            templates.len(),
-            events
+            "lint ok\n  pack: {}@{}\n  flows: {}\n  components: {}\n  dependencies: {}",
+            cfg.pack_id,
+            cfg.version,
+            compiled,
+            cfg.components.len(),
+            cfg.dependencies.len()
         );
     }
 

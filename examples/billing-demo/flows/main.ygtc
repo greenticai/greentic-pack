@@ -1,4 +1,12 @@
 id: main
-kind: flow/v1
-entry: start
-nodes: []
+title: Billing Demo
+description: Simple billing messaging flow that echoes a stub response.
+type: messaging
+start: start
+
+nodes:
+  start:
+    templating.handlebars:
+      text: "Billing demo response for {{in.customer_id}}"
+    routing:
+      - out: true

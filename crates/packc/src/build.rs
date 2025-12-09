@@ -1,52 +1,52 @@
-use crate::flows::FlowAsset;
-use crate::path_safety::normalize_under_root;
-use crate::templates::TemplateAsset;
-use crate::{BuildArgs, embed, flows, manifest, mcp, sbom, templates};
-use anyhow::{Context, Result};
-use greentic_pack::builder::{
-    ComponentArtifact, ImportRef, PACK_VERSION, PackBuilder, PackMeta, Provenance, Signing,
+use crate::config::{
+    AssetConfig, ComponentConfig, ComponentOperationConfig, FlowConfig, PackConfig,
+};
+use anyhow::{Context, Result, anyhow};
+use greentic_flow::compile_ygtc_str;
+use greentic_types::{
+    ComponentCapability, ComponentConfigurators, ComponentId, ComponentManifest,
+    ComponentOperation, Flow, FlowId, PackDependency, PackFlowEntry, PackId, PackKind,
+    PackManifest, PackSignatures, SemverReq, encode_pack_manifest,
 };
 use semver::Version;
-use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tracing::{debug, info};
+use tracing::info;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
     pub pack_dir: PathBuf,
-    pub component_out: PathBuf,
+    pub component_out: Option<PathBuf>,
     pub manifest_out: PathBuf,
-    pub sbom_out: PathBuf,
+    pub sbom_out: Option<PathBuf>,
     pub gtpack_out: Option<PathBuf>,
-    pub component_data: PathBuf,
     pub dry_run: bool,
 }
 
 impl BuildOptions {
-    pub fn from_args(args: BuildArgs) -> Result<Self> {
+    pub fn from_args(args: crate::BuildArgs) -> Result<Self> {
         let pack_dir = args
             .input
             .canonicalize()
             .with_context(|| format!("failed to canonicalize pack dir {}", args.input.display()))?;
-        let component_out = normalize_under_root(&pack_dir, &args.component_out)?;
-        let manifest_out = normalize_under_root(&pack_dir, &args.manifest)?;
-        let sbom_out = normalize_under_root(&pack_dir, &args.sbom)?;
+
+        let component_out = args
+            .component_out
+            .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) });
+        let manifest_out = args
+            .manifest
+            .map(|p| if p.is_relative() { pack_dir.join(p) } else { p })
+            .unwrap_or_else(|| pack_dir.join("dist").join("manifest.cbor"));
+        let sbom_out = args
+            .sbom
+            .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) });
         let gtpack_out = args
             .gtpack_out
-            .map(|p| normalize_under_root(&pack_dir, &p))
-            .transpose()?;
-        let default_component_data = pack_dir
-            .join(".packc")
-            .join("pack_component")
-            .join("src")
-            .join("data.rs");
-        let component_data = args
-            .component_data
-            .map(|p| normalize_under_root(&pack_dir, &p))
-            .transpose()?
-            .unwrap_or(default_component_data);
+            .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) });
 
         Ok(Self {
             pack_dir,
@@ -54,7 +54,6 @@ impl BuildOptions {
             manifest_out,
             sbom_out,
             gtpack_out,
-            component_data,
             dry_run: args.dry_run,
         })
     }
@@ -63,222 +62,408 @@ impl BuildOptions {
 pub fn run(opts: &BuildOptions) -> Result<()> {
     info!(
         pack_dir = %opts.pack_dir.display(),
-        component_out = %opts.component_out.display(),
         manifest_out = %opts.manifest_out.display(),
-        sbom_out = %opts.sbom_out.display(),
-        component_data = %opts.component_data.display(),
         gtpack_out = ?opts.gtpack_out,
         dry_run = opts.dry_run,
         "building greentic pack"
     );
 
-    let spec_bundle = manifest::load_spec(&opts.pack_dir)?;
-    info!(id = %spec_bundle.spec.id, version = %spec_bundle.spec.version, "loaded pack spec");
+    let config = crate::config::load_pack_config(&opts.pack_dir)?;
+    info!(
+        id = %config.pack_id,
+        version = %config.version,
+        kind = %config.kind,
+        components = config.components.len(),
+        flows = config.flows.len(),
+        dependencies = config.dependencies.len(),
+        "loaded pack.yaml"
+    );
 
-    let flows = flows::load_flows(&opts.pack_dir, &spec_bundle.spec)?;
-    info!(count = flows.len(), "loaded flows");
-
-    let templates = templates::collect_templates(&opts.pack_dir, &spec_bundle.spec)?;
-    info!(count = templates.len(), "collected templates");
-
-    let pack_version = Version::parse(&spec_bundle.spec.version)
-        .with_context(|| format!("invalid pack version {}", spec_bundle.spec.version))?;
-
-    let mcp_components = mcp::compose_all(&opts.pack_dir, &spec_bundle, &pack_version)?;
-
-    let pack_manifest = manifest::build_manifest(&spec_bundle, &flows, &templates);
-    let manifest_bytes = manifest::encode_manifest(&pack_manifest)?;
-    info!(len = manifest_bytes.len(), "encoded manifest");
-
-    let component_src = embed::generate_component_data(&manifest_bytes, &flows, &templates)?;
-    let sbom_model = sbom::generate(&spec_bundle, &flows, &templates);
-    let sbom_json = serde_json::to_string_pretty(&sbom_model)?;
+    let build = assemble_manifest(&config, &opts.pack_dir)?;
+    let manifest_bytes = encode_pack_manifest(&build.manifest)?;
+    info!(len = manifest_bytes.len(), "encoded manifest.cbor");
 
     if opts.dry_run {
-        debug!("component_data=\n{}", component_src);
         info!("dry-run complete; no files written");
         return Ok(());
     }
 
-    write_if_changed(&opts.manifest_out, &manifest_bytes)?;
-    write_if_changed(&opts.sbom_out, sbom_json.as_bytes())?;
-    write_if_changed(&opts.component_data, component_src.as_bytes())?;
+    if let Some(component_out) = opts.component_out.as_ref() {
+        write_stub_wasm(component_out)?;
+    }
 
-    embed::compile_component(&opts.component_data, &opts.component_out)?;
+    write_bytes(&opts.manifest_out, &manifest_bytes)?;
 
-    maybe_build_gtpack(
-        opts,
-        &spec_bundle,
-        &flows,
-        &templates,
-        &pack_version,
-        &mcp_components,
-    )?;
+    if let Some(sbom_out) = opts.sbom_out.as_ref() {
+        write_bytes(sbom_out, br#"{"files":[]} "#)?;
+    }
 
-    info!("build complete");
+    if let Some(gtpack_out) = opts.gtpack_out.as_ref() {
+        package_gtpack(gtpack_out, &manifest_bytes, &build)?;
+        info!(gtpack_out = %gtpack_out.display(), "gtpack archive ready");
+    }
+
     Ok(())
 }
 
-fn write_if_changed(path: &Path, contents: &[u8]) -> Result<()> {
+struct BuildProducts {
+    manifest: PackManifest,
+    components: Vec<ComponentBinary>,
+    assets: Vec<AssetFile>,
+}
+
+struct ComponentBinary {
+    id: String,
+    source: PathBuf,
+}
+
+struct AssetFile {
+    logical_path: String,
+    source: PathBuf,
+}
+
+fn assemble_manifest(config: &PackConfig, pack_root: &Path) -> Result<BuildProducts> {
+    let components = build_components(&config.components)?;
+    let flows = build_flows(&config.flows)?;
+    let dependencies = build_dependencies(&config.dependencies)?;
+    let assets = collect_assets(&config.assets, pack_root)?;
+
+    let manifest = PackManifest {
+        schema_version: "pack-v1".to_string(),
+        pack_id: PackId::new(config.pack_id.clone()).context("invalid pack_id")?,
+        version: Version::parse(&config.version)
+            .context("invalid pack version (expected semver)")?,
+        kind: map_kind(&config.kind)?,
+        publisher: config.publisher.clone(),
+        components: components.iter().map(|c| c.0.clone()).collect(),
+        flows,
+        dependencies,
+        capabilities: derive_pack_capabilities(&components),
+        signatures: PackSignatures::default(),
+    };
+
+    Ok(BuildProducts {
+        manifest,
+        components: components.into_iter().map(|(_, bin)| bin).collect(),
+        assets,
+    })
+}
+
+fn build_components(
+    configs: &[ComponentConfig],
+) -> Result<Vec<(ComponentManifest, ComponentBinary)>> {
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+
+    for cfg in configs {
+        if !seen.insert(cfg.id.clone()) {
+            anyhow::bail!("duplicate component id {}", cfg.id);
+        }
+
+        info!(id = %cfg.id, wasm = %cfg.wasm.display(), "adding component");
+        let manifest = ComponentManifest {
+            id: ComponentId::new(cfg.id.clone()).context("invalid component id")?,
+            version: Version::parse(&cfg.version)
+                .context("invalid component version (expected semver)")?,
+            supports: cfg.supports.iter().map(|k| k.to_kind()).collect(),
+            world: cfg.world.clone(),
+            profiles: cfg.profiles.clone(),
+            capabilities: cfg.capabilities.clone(),
+            configurators: convert_configurators(cfg)?,
+            operations: cfg
+                .operations
+                .iter()
+                .map(operation_from_config)
+                .collect::<Result<Vec<_>>>()?,
+            config_schema: cfg.config_schema.clone(),
+            resources: cfg.resources.clone().unwrap_or_default(),
+        };
+
+        let binary = ComponentBinary {
+            id: cfg.id.clone(),
+            source: cfg.wasm.clone(),
+        };
+
+        result.push((manifest, binary));
+    }
+
+    Ok(result)
+}
+
+fn operation_from_config(cfg: &ComponentOperationConfig) -> Result<ComponentOperation> {
+    Ok(ComponentOperation {
+        name: cfg.name.clone(),
+        input_schema: cfg.input_schema.clone(),
+        output_schema: cfg.output_schema.clone(),
+    })
+}
+
+fn convert_configurators(cfg: &ComponentConfig) -> Result<Option<ComponentConfigurators>> {
+    let Some(configurators) = cfg.configurators.as_ref() else {
+        return Ok(None);
+    };
+
+    let basic = match &configurators.basic {
+        Some(id) => Some(FlowId::new(id).context("invalid configurator flow id")?),
+        None => None,
+    };
+    let full = match &configurators.full {
+        Some(id) => Some(FlowId::new(id).context("invalid configurator flow id")?),
+        None => None,
+    };
+
+    Ok(Some(ComponentConfigurators { basic, full }))
+}
+
+fn build_flows(configs: &[FlowConfig]) -> Result<Vec<PackFlowEntry>> {
+    let mut seen = BTreeSet::new();
+    let mut entries = Vec::new();
+
+    for cfg in configs {
+        info!(id = %cfg.id, path = %cfg.file.display(), "compiling flow");
+        let yaml_src = fs::read_to_string(&cfg.file)
+            .with_context(|| format!("failed to read flow {}", cfg.file.display()))?;
+
+        let flow: Flow = compile_ygtc_str(&yaml_src)
+            .with_context(|| format!("failed to compile {}", cfg.file.display()))?;
+
+        let flow_id = flow.id.to_string();
+        if !seen.insert(flow_id.clone()) {
+            anyhow::bail!("duplicate flow id {}", flow_id);
+        }
+
+        let entrypoints = if cfg.entrypoints.is_empty() {
+            flow.entrypoints.keys().cloned().collect()
+        } else {
+            cfg.entrypoints.clone()
+        };
+
+        let flow_entry = PackFlowEntry {
+            id: flow.id.clone(),
+            kind: flow.kind,
+            flow,
+            tags: cfg.tags.clone(),
+            entrypoints,
+        };
+        entries.push(flow_entry);
+    }
+
+    Ok(entries)
+}
+
+fn build_dependencies(configs: &[crate::config::DependencyConfig]) -> Result<Vec<PackDependency>> {
+    let mut deps = Vec::new();
+    let mut seen = BTreeSet::new();
+    for cfg in configs {
+        if !seen.insert(cfg.alias.clone()) {
+            anyhow::bail!("duplicate dependency alias {}", cfg.alias);
+        }
+        deps.push(PackDependency {
+            alias: cfg.alias.clone(),
+            pack_id: PackId::new(cfg.pack_id.clone()).context("invalid dependency pack_id")?,
+            version_req: SemverReq::parse(&cfg.version_req)
+                .context("invalid dependency version requirement")?,
+            required_capabilities: cfg.required_capabilities.clone(),
+        });
+    }
+    Ok(deps)
+}
+
+fn collect_assets(configs: &[AssetConfig], pack_root: &Path) -> Result<Vec<AssetFile>> {
+    let mut assets = Vec::new();
+    for cfg in configs {
+        let logical = cfg
+            .path
+            .strip_prefix(pack_root)
+            .unwrap_or(&cfg.path)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        if logical.is_empty() {
+            anyhow::bail!("invalid asset path {}", cfg.path.display());
+        }
+        assets.push(AssetFile {
+            logical_path: logical,
+            source: cfg.path.clone(),
+        });
+    }
+    Ok(assets)
+}
+
+fn derive_pack_capabilities(
+    components: &[(ComponentManifest, ComponentBinary)],
+) -> Vec<ComponentCapability> {
+    let mut seen = BTreeSet::new();
+    let mut caps = Vec::new();
+
+    for (component, _) in components {
+        let mut add = |name: &str| {
+            if seen.insert(name.to_string()) {
+                caps.push(ComponentCapability {
+                    name: name.to_string(),
+                    description: None,
+                });
+            }
+        };
+
+        if component.capabilities.host.secrets.is_some() {
+            add("host:secrets");
+        }
+        if let Some(state) = &component.capabilities.host.state {
+            if state.read {
+                add("host:state:read");
+            }
+            if state.write {
+                add("host:state:write");
+            }
+        }
+        if component.capabilities.host.messaging.is_some() {
+            add("host:messaging");
+        }
+        if component.capabilities.host.events.is_some() {
+            add("host:events");
+        }
+        if component.capabilities.host.http.is_some() {
+            add("host:http");
+        }
+        if component.capabilities.host.telemetry.is_some() {
+            add("host:telemetry");
+        }
+        if component.capabilities.host.iac.is_some() {
+            add("host:iac");
+        }
+        if let Some(fs) = component.capabilities.wasi.filesystem.as_ref() {
+            add(&format!(
+                "wasi:fs:{}",
+                format!("{:?}", fs.mode).to_lowercase()
+            ));
+            if !fs.mounts.is_empty() {
+                add("wasi:fs:mounts");
+            }
+        }
+        if component.capabilities.wasi.random {
+            add("wasi:random");
+        }
+        if component.capabilities.wasi.clocks {
+            add("wasi:clocks");
+        }
+    }
+
+    caps
+}
+
+fn map_kind(raw: &str) -> Result<PackKind> {
+    match raw.to_ascii_lowercase().as_str() {
+        "application" => Ok(PackKind::Application),
+        "provider" => Ok(PackKind::Provider),
+        "infrastructure" => Ok(PackKind::Infrastructure),
+        "library" => Ok(PackKind::Library),
+        other => Err(anyhow!("unknown pack kind {}", other)),
+    }
+}
+
+fn package_gtpack(out_path: &Path, manifest_bytes: &[u8], build: &BuildProducts) -> Result<()> {
+    if let Some(parent) = out_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let file = fs::File::create(out_path)
+        .with_context(|| format!("failed to create {}", out_path.display()))?;
+    let mut writer = ZipWriter::new(file);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .unix_permissions(0o644);
+
+    write_zip_entry(&mut writer, "manifest.cbor", manifest_bytes, options)?;
+
+    let mut component_entries: Vec<_> = build
+        .components
+        .iter()
+        .map(|c| (format!("components/{}.wasm", c.id), c.source.clone()))
+        .collect();
+    component_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (logical, source) in component_entries {
+        let bytes = fs::read(&source)
+            .with_context(|| format!("failed to read component {}", source.display()))?;
+        write_zip_entry(&mut writer, &logical, &bytes, options)?;
+    }
+
+    let mut asset_entries: Vec<_> = build
+        .assets
+        .iter()
+        .map(|a| (format!("assets/{}", &a.logical_path), a.source.clone()))
+        .collect();
+    asset_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (logical, source) in asset_entries {
+        let bytes = fs::read(&source)
+            .with_context(|| format!("failed to read asset {}", source.display()))?;
+        write_zip_entry(&mut writer, &logical, &bytes, options)?;
+    }
+
+    writer
+        .finish()
+        .context("failed to finalise gtpack archive")?;
+    Ok(())
+}
+
+fn write_zip_entry(
+    writer: &mut ZipWriter<std::fs::File>,
+    logical_path: &str,
+    bytes: &[u8],
+    options: SimpleFileOptions,
+) -> Result<()> {
+    writer
+        .start_file(logical_path, options)
+        .with_context(|| format!("failed to start {}", logical_path))?;
+    writer
+        .write_all(bytes)
+        .with_context(|| format!("failed to write {}", logical_path))?;
+    Ok(())
+}
+
+fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
-
-    let mut needs_write = true;
-    if let Ok(current) = fs::read(path)
-        && current == contents
-    {
-        needs_write = false;
-    }
-
-    if needs_write {
-        fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;
-        info!(path = %path.display(), "wrote file");
-    } else {
-        debug!(path = %path.display(), "unchanged");
-    }
-
+    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
-fn maybe_build_gtpack(
-    opts: &BuildOptions,
-    spec_bundle: &manifest::SpecBundle,
-    flows: &[FlowAsset],
-    templates: &[TemplateAsset],
-    pack_version: &Version,
-    mcp_components: &[mcp::ComposedMcpComponent],
-) -> Result<()> {
-    if opts.dry_run {
-        info!("dry-run requested; skipping .gtpack generation");
-        return Ok(());
+fn write_stub_wasm(path: &Path) -> Result<()> {
+    const STUB: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    write_bytes(path, STUB)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn map_kind_accepts_known_values() {
+        assert!(matches!(
+            map_kind("application").unwrap(),
+            PackKind::Application
+        ));
+        assert!(matches!(map_kind("provider").unwrap(), PackKind::Provider));
+        assert!(matches!(
+            map_kind("infrastructure").unwrap(),
+            PackKind::Infrastructure
+        ));
+        assert!(matches!(map_kind("library").unwrap(), PackKind::Library));
+        assert!(map_kind("unknown").is_err());
     }
 
-    let Some(gtpack_path) = opts.gtpack_out.as_ref() else {
-        return Ok(());
-    };
-
-    info!(gtpack_out = %gtpack_path.display(), "packaging .gtpack archive");
-
-    let created_at = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
-
-    let entry_flows = if spec_bundle.spec.entry_flows.is_empty() {
-        flows.iter().map(|flow| flow.bundle.id.clone()).collect()
-    } else {
-        spec_bundle.spec.entry_flows.clone()
-    };
-
-    let mut annotations = spec_bundle.spec.annotations.clone();
-    if !spec_bundle.spec.imports_required.is_empty()
-        && !annotations.contains_key("imports_required")
-    {
-        annotations.insert(
-            "imports_required".to_string(),
-            JsonValue::Array(
-                spec_bundle
-                    .spec
-                    .imports_required
-                    .iter()
-                    .map(|entry| JsonValue::String(entry.clone()))
-                    .collect(),
-            ),
-        );
+    #[test]
+    fn collect_assets_preserves_relative_paths() {
+        let root = PathBuf::from("/packs/demo");
+        let assets = vec![AssetConfig {
+            path: root.join("assets").join("foo.txt"),
+        }];
+        let collected = collect_assets(&assets, &root).expect("collect assets");
+        assert_eq!(collected[0].logical_path, "assets/foo.txt");
     }
-
-    let imports = spec_bundle
-        .spec
-        .imports_required
-        .iter()
-        .map(|entry| ImportRef {
-            pack_id: entry.clone(),
-            version_req: "*".into(),
-        })
-        .collect();
-
-    let name = spec_bundle
-        .spec
-        .name
-        .clone()
-        .unwrap_or_else(|| spec_bundle.spec.id.clone());
-    let meta = PackMeta {
-        pack_version: PACK_VERSION,
-        pack_id: spec_bundle.spec.id.clone(),
-        version: pack_version.clone(),
-        name,
-        kind: spec_bundle.spec.kind.clone(),
-        description: spec_bundle.spec.description.clone(),
-        authors: spec_bundle.spec.authors.clone(),
-        license: spec_bundle.spec.license.clone(),
-        homepage: spec_bundle.spec.homepage.clone(),
-        support: spec_bundle.spec.support.clone(),
-        vendor: spec_bundle.spec.vendor.clone(),
-        imports,
-        entry_flows,
-        created_at_utc: created_at.clone(),
-        events: spec_bundle.spec.events.clone(),
-        repo: spec_bundle.spec.repo.clone(),
-        messaging: spec_bundle.spec.messaging.clone(),
-        interfaces: spec_bundle.spec.interfaces.clone(),
-        annotations,
-        distribution: spec_bundle.spec.distribution.clone(),
-        components: spec_bundle.spec.components.clone(),
-    };
-
-    let mut builder = PackBuilder::new(meta);
-    for flow in flows {
-        builder = builder.with_flow(flow.bundle.clone());
-    }
-
-    let component_version = Version::parse(env!("CARGO_PKG_VERSION"))
-        .context("failed to parse package version for component metadata")?;
-    let component = ComponentArtifact {
-        name: "pack_component".into(),
-        version: component_version,
-        wasm_path: opts.component_out.clone(),
-        schema_json: None,
-        manifest_json: None,
-        capabilities: None,
-        world: None,
-        hash_blake3: None,
-    };
-    builder = builder.with_component(component);
-
-    for mcp in mcp_components {
-        builder = builder.with_component(ComponentArtifact {
-            name: mcp.id.clone(),
-            version: mcp.version.clone(),
-            wasm_path: mcp.artifact_path.clone(),
-            schema_json: None,
-            manifest_json: None,
-            capabilities: None,
-            world: Some("greentic:component@0.4.0".to_string()),
-            hash_blake3: None,
-        });
-    }
-
-    for template in templates {
-        builder = builder.with_asset_bytes(template.logical_path.clone(), template.bytes.clone());
-    }
-
-    let provenance = Provenance {
-        builder: format!("packc@{}", env!("CARGO_PKG_VERSION")),
-        git_commit: None,
-        git_repo: None,
-        toolchain: None,
-        built_at_utc: created_at,
-        host: None,
-        notes: None,
-    };
-
-    builder = builder
-        .with_provenance(provenance)
-        .with_signing(Signing::Dev);
-
-    builder.build(gtpack_path)?;
-
-    info!(gtpack_out = %gtpack_path.display(), "gtpack archive ready");
-    Ok(())
 }

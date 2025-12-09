@@ -6,13 +6,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use greentic_types::{EnvId, TenantCtx, TenantId};
 
-use crate::telemetry::set_current_tenant_ctx;
-
-use crate::{build, new};
-
 pub mod lint;
 pub mod sign;
 pub mod verify;
+
+use crate::telemetry::set_current_tenant_ctx;
+use crate::{build, new};
 
 #[derive(Debug, Parser)]
 #[command(name = "packc", about = "Greentic pack builder CLI", version)]
@@ -34,13 +33,13 @@ pub enum Command {
     /// Build a pack component and supporting artifacts
     Build(BuildArgs),
     /// Lint a pack manifest, flows, and templates
-    Lint(lint::LintArgs),
+    Lint(self::lint::LintArgs),
     /// Scaffold a new pack directory
     New(new::NewArgs),
     /// Sign a pack manifest using an Ed25519 private key
-    Sign(sign::SignArgs),
+    Sign(self::sign::SignArgs),
     /// Verify a pack's manifest signature
-    Verify(verify::VerifyArgs),
+    Verify(self::verify::VerifyArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -49,25 +48,21 @@ pub struct BuildArgs {
     #[arg(long = "in", value_name = "DIR")]
     pub input: PathBuf,
 
-    /// Output path for the built Wasm component
-    #[arg(long = "out", value_name = "FILE", default_value = "dist/pack.wasm")]
-    pub component_out: PathBuf,
+    /// Output path for the built Wasm component (legacy; writes a stub)
+    #[arg(long = "out", value_name = "FILE")]
+    pub component_out: Option<PathBuf>,
 
-    /// Output path for the generated manifest (CBOR)
-    #[arg(long, value_name = "FILE", default_value = "dist/manifest.cbor")]
-    pub manifest: PathBuf,
+    /// Output path for the generated manifest (CBOR); defaults to dist/manifest.cbor
+    #[arg(long, value_name = "FILE")]
+    pub manifest: Option<PathBuf>,
 
-    /// Output path for the generated SBOM (CycloneDX JSON)
-    #[arg(long, value_name = "FILE", default_value = "dist/sbom.cdx.json")]
-    pub sbom: PathBuf,
+    /// Output path for the generated SBOM (legacy; writes a stub JSON)
+    #[arg(long, value_name = "FILE")]
+    pub sbom: Option<PathBuf>,
 
     /// Output path for the generated & canonical .gtpack archive
     #[arg(long = "gtpack-out", value_name = "FILE")]
     pub gtpack_out: Option<PathBuf>,
-
-    /// Optional override for the generated component data source file
-    #[arg(long = "component-data", value_name = "FILE")]
-    pub component_data: Option<PathBuf>,
 
     /// When set, the command validates input without writing artifacts
     #[arg(long)]
@@ -92,10 +87,10 @@ pub fn run_with_cli(cli: Cli) -> Result<()> {
 
     match cli.command {
         Command::Build(args) => build::run(&build::BuildOptions::from_args(args)?)?,
-        Command::Lint(args) => lint::handle(args, cli.json)?,
+        Command::Lint(args) => self::lint::handle(args, cli.json)?,
         Command::New(args) => new::handle(args, cli.json)?,
-        Command::Sign(args) => sign::handle(args, cli.json)?,
-        Command::Verify(args) => verify::handle(args, cli.json)?,
+        Command::Sign(args) => self::sign::handle(args, cli.json)?,
+        Command::Verify(args) => self::verify::handle(args, cli.json)?,
     }
 
     Ok(())

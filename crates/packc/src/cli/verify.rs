@@ -1,115 +1,103 @@
 #![forbid(unsafe_code)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use serde::Serialize;
-use serde_json;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
-
-use crate::manifest::PackSignature;
-use crate::signing::{VerifyOptions, verify_pack_dir};
+use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::pkcs8::DecodePublicKey;
+use greentic_types::{PackManifest, SignatureAlgorithm, encode_pack_manifest};
 
 #[derive(Debug, Parser)]
 pub struct VerifyArgs {
-    /// Path to the pack directory containing pack.toml
+    /// Path to the pack directory containing pack.yaml
     #[arg(long = "pack", value_name = "DIR")]
     pub pack: PathBuf,
 
-    /// Public key to verify against (PKCS#8 PEM)
-    #[arg(long = "pub", value_name = "FILE")]
-    pub public_key: Option<PathBuf>,
+    /// Path to manifest.cbor (defaults to <pack>/dist/manifest.cbor)
+    #[arg(long = "manifest", value_name = "FILE")]
+    pub manifest: Option<PathBuf>,
 
-    /// Allow verification to succeed when no signature is present
-    #[arg(long = "allow-unsigned")]
-    pub allow_unsigned: bool,
+    /// Ed25519 public key in PKCS#8 PEM format
+    #[arg(long = "key", value_name = "FILE")]
+    pub key: PathBuf,
 }
 
 pub fn handle(args: VerifyArgs, json: bool) -> Result<()> {
-    let VerifyArgs {
-        pack,
-        public_key,
-        allow_unsigned,
-    } = args;
-
-    let pack_dir = pack
+    let pack_dir = args
+        .pack
         .canonicalize()
-        .with_context(|| format!("failed to resolve {}", pack.display()))?;
+        .with_context(|| format!("failed to resolve pack dir {}", args.pack.display()))?;
+    let manifest_path = args
+        .manifest
+        .map(|p| if p.is_relative() { pack_dir.join(p) } else { p })
+        .unwrap_or_else(|| pack_dir.join("dist").join("manifest.cbor"));
 
-    let public_key_pem = match public_key {
-        Some(path) => Some(
-            fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?,
-        ),
-        None => None,
-    };
+    let manifest_bytes = fs::read(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: PackManifest = greentic_types::decode_pack_manifest(&manifest_bytes)
+        .context("manifest.cbor is not a valid PackManifest")?;
 
-    let signature = verify_pack_dir(
-        &pack_dir,
-        VerifyOptions {
-            public_key_pem: public_key_pem.as_deref(),
-            allow_unsigned,
-        },
-    )?;
+    if manifest.signatures.signatures.is_empty() {
+        anyhow::bail!("no signatures present in manifest");
+    }
+
+    let public_pem = fs::read_to_string(&args.key)
+        .with_context(|| format!("failed to read public key {}", args.key.display()))?;
+    let verifying_key =
+        VerifyingKey::from_public_key_pem(&public_pem).context("failed to parse public key")?;
+
+    let unsigned_bytes = encode_unsigned(&manifest)?;
+
+    let mut verified = false;
+    let mut errors = Vec::new();
+    for sig in &manifest.signatures.signatures {
+        if sig.algorithm != SignatureAlgorithm::Ed25519 {
+            errors.push(format!("unsupported algorithm {:?}", sig.algorithm));
+            continue;
+        }
+        let Ok(signature) = ed25519_dalek::Signature::try_from(sig.signature.as_slice()) else {
+            errors.push("invalid signature bytes".to_string());
+            continue;
+        };
+        if verifying_key
+            .verify_strict(&unsigned_bytes, &signature)
+            .is_ok()
+        {
+            verified = true;
+            break;
+        } else {
+            errors.push("signature verification failed".to_string());
+        }
+    }
+
+    if !verified {
+        anyhow::bail!("no signatures verified: {}", errors.join(", "));
+    }
 
     if json {
-        print_json(&signature, &pack_dir)?;
-    } else {
-        print_human(&signature, &pack_dir)?;
-    }
-
-    Ok(())
-}
-
-fn print_human(signature: &PackSignature, pack_dir: &Path) -> Result<()> {
-    if signature.alg == "none" {
         println!(
-            "verified pack manifest in {} (unsigned manifest accepted)",
-            pack_dir.display()
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "verified",
+                "manifest": manifest_path,
+                "signatures": manifest.signatures.signatures.len(),
+            }))?
         );
-        return Ok(());
+    } else {
+        println!(
+            "verified manifest\n  manifest: {}\n  signatures checked: {}",
+            manifest_path.display(),
+            manifest.signatures.signatures.len()
+        );
     }
-
-    let created_at = signature
-        .created_at
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| signature.created_at.to_string());
-
-    println!(
-        "verified pack manifest in {}\n  key_id: {}\n  digest: {}\n  created_at: {}",
-        pack_dir.display(),
-        signature.key_id,
-        signature.digest,
-        created_at
-    );
 
     Ok(())
 }
 
-fn print_json(signature: &PackSignature, pack_dir: &Path) -> Result<()> {
-    #[derive(Serialize)]
-    struct Payload<'a> {
-        pack: &'a Path,
-        alg: &'a str,
-        key_id: &'a str,
-        digest: &'a str,
-        #[serde(with = "time::serde::rfc3339")]
-        created_at: OffsetDateTime,
-        sig: &'a str,
-    }
-
-    let payload = Payload {
-        pack: pack_dir,
-        alg: &signature.alg,
-        key_id: &signature.key_id,
-        digest: &signature.digest,
-        created_at: signature.created_at,
-        sig: &signature.sig,
-    };
-
-    println!("{}", serde_json::to_string(&payload)?);
-    Ok(())
+fn encode_unsigned(manifest: &PackManifest) -> Result<Vec<u8>> {
+    let mut unsigned = manifest.clone();
+    unsigned.signatures.signatures.clear();
+    encode_pack_manifest(&unsigned).context("failed to encode unsigned manifest")
 }

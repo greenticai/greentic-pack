@@ -1,20 +1,27 @@
-packVersion: 1
-id: greentic.reco.demo
+pack_id: greentic.reco.demo
 version: 0.1.0
-name: Recommendation Demo Pack
-description: Example recommendation-provider pack manifest
-flow_files:
-  - flows/main.ygtc
-entry_flows:
-  - main
-repo:
-  kind: recommendation-provider
-  capabilities:
-    reco: ["product"]
-  bindings:
-    reco:
-      - package: "greentic:reco"
-        world: "recommender"
-        version: "1.0.0"
-        component: "reco-generic"
-        entrypoint: "recommend"
+kind: provider
+publisher: Greentic
+
+components:
+  - id: "templating.handlebars"
+    version: "0.0.1"
+    world: "greentic:component/stub"
+    supports: ["messaging"]
+    profiles:
+      default: "default"
+      supported: ["default"]
+    capabilities:
+      wasi: {}
+      host: {}
+    wasm: "components/templating.handlebars.wasm"
+
+flows:
+  - id: main
+    file: flows/main.ygtc
+    tags: [default]
+    entrypoints: [default]
+
+dependencies: []
+
+assets: []

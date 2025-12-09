@@ -1,3 +1,4 @@
+use greentic_types::ResourceHints;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -49,6 +50,9 @@ fn build_sample_pack(out_path: &Path) {
             },
         },
         configurators: None,
+        operations: Vec::new(),
+        config_schema: None,
+        resources: ResourceHints::default(),
     };
 
     let manifest_json = serde_json::to_string_pretty(&component_manifest).unwrap();

@@ -45,6 +45,7 @@ rand_core_06 = { workspace = true }
 greentic-pack = { version = "0.4", path = "../greentic-pack" }
 semver = { workspace = true }
 schemars = { workspace = true }
+zip = { workspace = true }
 
 [[bin]]
 name = "packc"

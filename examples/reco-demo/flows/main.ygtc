@@ -1,4 +1,12 @@
 id: main
-kind: flow/v1
-entry: start
-nodes: []
+title: Recommendation Demo
+description: Simple recommendation flow that returns a stub item.
+type: messaging
+start: start
+
+nodes:
+  start:
+    templating.handlebars:
+      text: "Recommended item for {{in.user}}: demo-product-123"
+    routing:
+      - out: true

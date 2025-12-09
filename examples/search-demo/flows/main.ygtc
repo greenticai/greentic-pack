@@ -1,4 +1,12 @@
 id: main
-kind: flow/v1
-entry: start
-nodes: []
+title: Search Demo
+description: Simple search flow that echoes the query.
+type: messaging
+start: start
+
+nodes:
+  start:
+    templating.handlebars:
+      text: "You searched for: {{in.query}}"
+    routing:
+      - out: true

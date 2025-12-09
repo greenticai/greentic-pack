@@ -1,24 +1,27 @@
-packVersion: 1
-id: greentic.search.demo
+pack_id: greentic.search.demo
 version: 0.1.0
-name: Search Demo Pack
-description: Example search-provider pack manifest
-flow_files:
-  - flows/main.ygtc
-entry_flows:
-  - main
-repo:
-  kind: search-provider
-  capabilities:
-    search: ["text", "vector"]
-  bindings:
-    search:
-      - package: "greentic:search"
-        world: "searcher"
-        version: "1.0.0"
-        component: "search-generic"
-        entrypoint: "query"
-interfaces:
-  - package: "greentic:analytics"
-    world: "tracker"
-    version: "1.0.0"
+kind: provider
+publisher: Greentic
+
+components:
+  - id: "templating.handlebars"
+    version: "0.0.1"
+    world: "greentic:component/stub"
+    supports: ["messaging"]
+    profiles:
+      default: "default"
+      supported: ["default"]
+    capabilities:
+      wasi: {}
+      host: {}
+    wasm: "components/templating.handlebars.wasm"
+
+flows:
+  - id: main
+    file: flows/main.ygtc
+    tags: [default]
+    entrypoints: [default]
+
+dependencies: []
+
+assets: []
