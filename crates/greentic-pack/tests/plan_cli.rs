@@ -1,4 +1,5 @@
 use greentic_types::ResourceHints;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -53,6 +54,7 @@ fn build_sample_pack(out_path: &Path) {
         operations: Vec::new(),
         config_schema: None,
         resources: ResourceHints::default(),
+        dev_flows: BTreeMap::new(),
     };
 
     let manifest_json = serde_json::to_string_pretty(&component_manifest).unwrap();

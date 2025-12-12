@@ -9,7 +9,7 @@ use greentic_types::{
     PackManifest, PackSignatures, SemverReq, encode_pack_manifest,
 };
 use semver::Version;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -177,6 +177,7 @@ fn build_components(
                 .collect::<Result<Vec<_>>>()?,
             config_schema: cfg.config_schema.clone(),
             resources: cfg.resources.clone().unwrap_or_default(),
+            dev_flows: BTreeMap::new(),
         };
 
         let binary = ComponentBinary {
@@ -440,7 +441,12 @@ fn write_stub_wasm(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use greentic_types::flow::FlowKind;
+    use serde_json::json;
+    use std::io::Read;
+    use std::{fs, path::PathBuf};
+    use tempfile::tempdir;
+    use zip::ZipArchive;
 
     #[test]
     fn map_kind_accepts_known_values() {
@@ -465,5 +471,117 @@ mod tests {
         }];
         let collected = collect_assets(&assets, &root).expect("collect assets");
         assert_eq!(collected[0].logical_path, "assets/foo.txt");
+    }
+
+    #[test]
+    fn component_manifest_without_dev_flows_defaults_to_empty() {
+        let manifest: ComponentManifest = serde_json::from_value(json!({
+            "id": "component.dev",
+            "version": "1.0.0",
+            "supports": ["messaging"],
+            "world": "greentic:demo@1.0.0",
+            "profiles": { "default": "default", "supported": ["default"] },
+            "capabilities": { "wasi": {}, "host": {} },
+            "operations": [],
+            "resources": {}
+        }))
+        .expect("manifest without dev_flows");
+
+        assert!(manifest.dev_flows.is_empty());
+
+        let pack_manifest = pack_manifest_with_component(manifest.clone());
+        let encoded = encode_pack_manifest(&pack_manifest).expect("encode manifest");
+        let decoded: PackManifest =
+            greentic_types::decode_pack_manifest(&encoded).expect("decode manifest");
+        let stored = decoded
+            .components
+            .iter()
+            .find(|item| item.id == manifest.id)
+            .expect("component present");
+        assert!(stored.dev_flows.is_empty());
+    }
+
+    #[test]
+    fn dev_flows_round_trip_in_manifest_and_gtpack() {
+        let component = manifest_with_dev_flow();
+        let pack_manifest = pack_manifest_with_component(component.clone());
+        let manifest_bytes = encode_pack_manifest(&pack_manifest).expect("encode manifest");
+
+        let decoded: PackManifest =
+            greentic_types::decode_pack_manifest(&manifest_bytes).expect("decode manifest");
+        let decoded_component = decoded
+            .components
+            .iter()
+            .find(|item| item.id == component.id)
+            .expect("component present");
+        assert_eq!(decoded_component.dev_flows, component.dev_flows);
+
+        let temp = tempdir().expect("temp dir");
+        let wasm_path = temp.path().join("component.wasm");
+        write_stub_wasm(&wasm_path).expect("write stub wasm");
+
+        let build = BuildProducts {
+            manifest: pack_manifest,
+            components: vec![ComponentBinary {
+                id: component.id.to_string(),
+                source: wasm_path,
+            }],
+            assets: Vec::new(),
+        };
+
+        let out = temp.path().join("demo.gtpack");
+        package_gtpack(&out, &manifest_bytes, &build).expect("package gtpack");
+
+        let mut archive = ZipArchive::new(fs::File::open(&out).expect("open gtpack"))
+            .expect("read gtpack archive");
+        let mut manifest_entry = archive.by_name("manifest.cbor").expect("manifest.cbor");
+        let mut stored = Vec::new();
+        manifest_entry
+            .read_to_end(&mut stored)
+            .expect("read manifest");
+        let decoded: PackManifest =
+            greentic_types::decode_pack_manifest(&stored).expect("decode packaged manifest");
+
+        let stored_component = decoded
+            .components
+            .iter()
+            .find(|item| item.id == component.id)
+            .expect("component preserved");
+        assert_eq!(stored_component.dev_flows, component.dev_flows);
+    }
+
+    fn manifest_with_dev_flow() -> ComponentManifest {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/component_manifest_with_dev_flows.json"
+        ))
+        .expect("fixture manifest")
+    }
+
+    fn pack_manifest_with_component(component: ComponentManifest) -> PackManifest {
+        let flow = serde_json::from_value(json!({
+            "schema_version": "flow/v1",
+            "id": "flow.dev",
+            "kind": "messaging"
+        }))
+        .expect("flow json");
+
+        PackManifest {
+            schema_version: "pack-v1".to_string(),
+            pack_id: PackId::new("demo.pack").expect("pack id"),
+            version: Version::parse("1.0.0").expect("version"),
+            kind: PackKind::Application,
+            publisher: "demo".to_string(),
+            components: vec![component],
+            flows: vec![PackFlowEntry {
+                id: FlowId::new("flow.dev").expect("flow id"),
+                kind: FlowKind::Messaging,
+                flow,
+                tags: Vec::new(),
+                entrypoints: Vec::new(),
+            }],
+            dependencies: Vec::new(),
+            capabilities: Vec::new(),
+            signatures: PackSignatures::default(),
+        }
     }
 }

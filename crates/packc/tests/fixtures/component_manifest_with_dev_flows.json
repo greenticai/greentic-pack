@@ -1,0 +1,31 @@
+{
+  "id": "component.dev",
+  "version": "1.0.0",
+  "supports": ["messaging"],
+  "world": "greentic:demo@1.0.0",
+  "profiles": {
+    "default": "default",
+    "supported": ["default"]
+  },
+  "capabilities": {
+    "wasi": {},
+    "host": {}
+  },
+  "operations": [],
+  "config_schema": null,
+  "resources": {},
+  "dev_flows": {
+    "default": {
+      "format": "flow-ir-json",
+      "graph": {
+        "nodes": [
+          { "id": "start", "type": "start" },
+          { "id": "end", "type": "end" }
+        ],
+        "edges": [
+          { "from": "start", "to": "end" }
+        ]
+      }
+    }
+  }
+}

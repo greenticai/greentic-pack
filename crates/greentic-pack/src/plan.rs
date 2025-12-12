@@ -176,6 +176,7 @@ fn infer_telemetry_plan(components: &HashMap<String, ComponentManifest>) -> Opti
 #[cfg(test)]
 mod tests {
     use greentic_types::ResourceHints;
+    use std::collections::BTreeMap;
     use std::str::FromStr;
 
     use super::*;
@@ -261,6 +262,7 @@ mod tests {
             operations: Vec::new(),
             config_schema: None,
             resources: ResourceHints::default(),
+            dev_flows: BTreeMap::new(),
         };
 
         let mut components = HashMap::new();

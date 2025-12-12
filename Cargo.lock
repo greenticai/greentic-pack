@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1192,9 +1192,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0b5e26eaa4f5bdf4c0ee8690043a95382a9552b4e98513af0c491aeaa05f3fd"
+checksum = "4054eef4f7b6acc6b41b27bd67bc5ad8a861725649b7dc7fc0aac962d25b47ef"
 dependencies = [
  "chrono",
  "ciborium",
@@ -1977,7 +1977,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -1987,11 +1987,11 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.15"
+version = "0.4.16"
 
 [[package]]
 name = "packc"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "anyhow",
  "assert_cmd",

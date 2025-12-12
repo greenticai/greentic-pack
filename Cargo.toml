@@ -14,7 +14,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.89"
-version = "0.4.15"
+version = "0.4.16"
 license = "MIT"
 
 [workspace.dependencies]
@@ -39,7 +39,7 @@ pkcs8 = { version = "0.10", features = ["pem"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
-greentic-types = "0.4"
+greentic-types = "0.4.15"
 greentic-flow =  "0.4"
 greentic-interfaces-host = "0.4"
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
