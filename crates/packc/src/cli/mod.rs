@@ -6,13 +6,14 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use greentic_types::{EnvId, TenantCtx, TenantId};
 
+pub mod config;
 pub mod gui;
 pub mod lint;
 pub mod sign;
 pub mod verify;
 
 use crate::telemetry::set_current_tenant_ctx;
-use crate::{build, new};
+use crate::{build, new, runtime};
 
 #[derive(Debug, Parser)]
 #[command(name = "packc", about = "Greentic pack builder CLI", version)]
@@ -28,6 +29,10 @@ pub struct Cli {
     /// Override cache directory (defaults to pack_dir/.packc or GREENTIC_PACK_CACHE_DIR)
     #[arg(long = "cache-dir", global = true)]
     pub cache_dir: Option<PathBuf>,
+
+    /// Optional config overrides in TOML/JSON (greentic-config layer)
+    #[arg(long = "config-override", value_name = "FILE", global = true)]
+    pub config_override: Option<PathBuf>,
 
     /// Emit machine-readable JSON output where applicable
     #[arg(long, global = true)]
@@ -53,6 +58,8 @@ pub enum Command {
     /// GUI-related tooling
     #[command(subcommand)]
     Gui(self::gui::GuiCommand),
+    /// Inspect resolved configuration (provenance and warnings)
+    Config(self::config::ConfigArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -101,11 +108,15 @@ pub fn resolve_env_filter(cli: &Cli) -> String {
 
 /// Execute the CLI using a pre-parsed argument set.
 pub fn run_with_cli(cli: Cli) -> Result<()> {
-    let runtime = crate::runtime::resolve_runtime(
-        std::env::current_dir()?.as_path(),
+    let runtime = runtime::resolve_runtime(
+        Some(std::env::current_dir()?.as_path()),
         cli.cache_dir.as_deref(),
         cli.offline,
-    );
+        cli.config_override.as_deref(),
+    )?;
+
+    // Install telemetry according to resolved config.
+    crate::telemetry::install_with_config("packc", &runtime.resolved.config.telemetry)?;
 
     set_current_tenant_ctx(&TenantCtx::new(
         EnvId::try_from("local").expect("static env id"),
@@ -119,6 +130,7 @@ pub fn run_with_cli(cli: Cli) -> Result<()> {
         Command::Sign(args) => self::sign::handle(args, cli.json)?,
         Command::Verify(args) => self::verify::handle(args, cli.json)?,
         Command::Gui(cmd) => self::gui::handle(cmd, cli.json, &runtime)?,
+        Command::Config(args) => self::config::handle(args, cli.json, &runtime)?,
     }
 
     Ok(())

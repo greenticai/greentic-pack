@@ -1,7 +1,7 @@
 use crate::config::{
     AssetConfig, ComponentConfig, ComponentOperationConfig, FlowConfig, PackConfig,
 };
-use crate::runtime::ResolvedRuntime;
+use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow};
 use greentic_flow::compile_ygtc_str;
 use greentic_types::{
@@ -19,7 +19,7 @@ use tracing::info;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BuildOptions {
     pub pack_dir: PathBuf,
     pub component_out: Option<PathBuf>,
@@ -29,11 +29,11 @@ pub struct BuildOptions {
     pub dry_run: bool,
     pub secrets_req: Option<PathBuf>,
     pub default_secret_scope: Option<String>,
-    pub runtime: ResolvedRuntime,
+    pub runtime: RuntimeContext,
 }
 
 impl BuildOptions {
-    pub fn from_args(args: crate::BuildArgs, runtime: &ResolvedRuntime) -> Result<Self> {
+    pub fn from_args(args: crate::BuildArgs, runtime: &RuntimeContext) -> Result<Self> {
         let pack_dir = args
             .input
             .canonicalize()

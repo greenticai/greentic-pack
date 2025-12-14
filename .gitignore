@@ -3,3 +3,4 @@ dist/
 .packc/
 **/.packc/
 .DS_Store
+examples/.DS_Store

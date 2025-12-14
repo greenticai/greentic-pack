@@ -63,9 +63,13 @@ Usage: packc build --in <DIR> [--out <FILE>] [--manifest <FILE>]
 - `--default-secret-scope` – dev-only helper to fill missing secret scopes
   (format: `ENV/TENANT[/TEAM]`).
 - `--log` – customise the tracing filter (defaults to `info`).
+- `--offline` – hard-disable any network activity (highest precedence; also see `GREENTIC_PACK_OFFLINE`).
+- `--cache-dir` – override the packc cache root (default: `<pack_dir>/.packc/`; env: `GREENTIC_PACK_CACHE_DIR`).
 
 `packc` writes structured progress logs to stderr. When invoking inside CI, pass
 `--dry-run` to skip Wasm compilation if the target toolchain is unavailable.
+Use `packc config` to print the resolved configuration, provenance, and any
+warnings (add `--json` for machine-readable output).
 
 ### GUI pack converter (Loveable)
 

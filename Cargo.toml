@@ -14,7 +14,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.89"
-version = "0.4.19"
+version = "0.4.20"
 license = "MIT"
 
 [workspace.dependencies]
@@ -43,6 +43,8 @@ greentic-types = "0.4"
 greentic-flow =  "0.4"
 greentic-interfaces-host = "0.4"
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
+greentic-config-types = "0.4"
+greentic-config = "0.4"
 greentic-pack = { path = "crates/greentic-pack", version="0.4" }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 pack_component_template = { version = "0.4", path = "crates/pack_component_template" }

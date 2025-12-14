@@ -27,8 +27,15 @@ pub fn compose_all(
     pack_dir: &Path,
     spec_bundle: &SpecBundle,
     pack_version: &Version,
+    runtime: &crate::runtime::RuntimeContext,
 ) -> Result<Vec<ComposedMcpComponent>> {
-    compose_all_with_override(pack_dir, spec_bundle, pack_version, fake_compose_enabled())
+    compose_all_with_override(
+        pack_dir,
+        spec_bundle,
+        pack_version,
+        fake_compose_enabled(),
+        runtime,
+    )
 }
 
 pub fn compose_all_with_override(
@@ -36,12 +43,13 @@ pub fn compose_all_with_override(
     spec_bundle: &SpecBundle,
     pack_version: &Version,
     allow_fake_compose: bool,
+    runtime: &crate::runtime::RuntimeContext,
 ) -> Result<Vec<ComposedMcpComponent>> {
     if spec_bundle.spec.mcp_components.is_empty() {
         return Ok(Vec::new());
     }
 
-    let workspace = pack_dir.join(".packc").join("mcp");
+    let workspace = runtime.cache_dir().join("mcp");
     fs::create_dir_all(&workspace)
         .with_context(|| format!("failed to prepare MCP workspace {}", workspace.display()))?;
 
@@ -51,7 +59,7 @@ pub fn compose_all_with_override(
         let protocol = normalize_protocol(&entry.protocol);
         let adapter_template = entry.adapter_template.clone();
         let router_path = resolve_router_path(pack_dir, &entry.router_ref)?;
-        let adapter_path = resolve_adapter_template(&protocol, &adapter_template)?;
+        let adapter_path = resolve_adapter_template(&protocol, &adapter_template, runtime)?;
         let out_path = workspace.join(&entry.id).join("component.wasm");
 
         if let Some(parent) = out_path.parent() {
@@ -87,7 +95,11 @@ fn resolve_router_path(pack_dir: &Path, router_ref: &str) -> Result<PathBuf> {
     }
 }
 
-fn resolve_adapter_template(protocol: &str, adapter_template: &str) -> Result<PathBuf> {
+fn resolve_adapter_template(
+    protocol: &str,
+    adapter_template: &str,
+    runtime: &crate::runtime::RuntimeContext,
+) -> Result<PathBuf> {
     if adapter_template != McpComponentSpec::ADAPTER_DEFAULT {
         bail!(
             "unsupported adapter_template `{}` (only `default` is available)",
@@ -104,6 +116,7 @@ fn resolve_adapter_template(protocol: &str, adapter_template: &str) -> Result<Pa
                     return Ok(adapter_path);
                 }
             }
+            runtime.require_online("resolve MCP adapter template")?;
             ensure_adapter_local(&MCP_ADAPTER_25_06_18)
         }
         other => bail!("unsupported MCP protocol `{}`", other),

@@ -156,6 +156,15 @@ generates `gui/manifest.json`, copies `gui/assets/**`, writes a canonical
 routes with `--route /path:file.html`, force SPA/MPA with `--spa`, and set the
 output via `--out`.
 
+#### Offline and cache controls
+
+- Pass `--offline` to hard-disable any network activity during pack builds
+  (e.g., git clones or dependency downloads). `GREENTIC_PACK_OFFLINE=1` enables
+  the same guard, but the CLI flag always wins and emits a warning when it
+  overrides the environment.
+- Override the packc cache root with `--cache-dir <path>` or
+  `GREENTIC_PACK_CACHE_DIR`; otherwise the cache defaults to `<pack_dir>/.packc/`.
+
 #### Secret requirements
 
 `packc build` now aggregates component secret requirements, dedupes them, and
