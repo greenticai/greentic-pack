@@ -8,14 +8,18 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use greentic_types::decode_pack_manifest;
+use greentic_types::pack_manifest::PackManifest as GpackManifest;
 use serde::Deserialize;
+use serde_json;
 use x509_parser::pem::parse_x509_pem;
 use x509_parser::prelude::*;
 use zip::ZipArchive;
 
 use crate::builder::{
-    PackManifest, SBOM_FORMAT, SIGNATURE_CHAIN_PATH, SIGNATURE_PATH, SbomEntry, SignatureEnvelope,
-    hex_hash, signature_digest_from_entries,
+    ComponentEntry, FlowEntry, ImportRef, PackManifest, PackMeta, SBOM_FORMAT,
+    SIGNATURE_CHAIN_PATH, SIGNATURE_PATH, SbomEntry, SignatureEnvelope, hex_hash,
+    signature_digest_from_entries,
 };
 
 #[cfg(test)]
@@ -86,39 +90,129 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
         .get("manifest.cbor")
         .cloned()
         .ok_or_else(|| anyhow!("manifest.cbor missing from archive"))?;
-    let manifest: PackManifest =
-        serde_cbor::from_slice(&manifest_bytes).context("manifest.cbor is invalid")?;
+    match decode_manifest(&manifest_bytes).context("manifest.cbor is invalid")? {
+        ManifestModel::Pack(manifest) => {
+            let manifest = *manifest;
+            let sbom_bytes = files
+                .get("sbom.json")
+                .cloned()
+                .ok_or_else(|| anyhow!("sbom.json missing from archive"))?;
+            let sbom_doc: SbomDocument =
+                serde_json::from_slice(&sbom_bytes).context("sbom.json is not valid JSON")?;
+            if sbom_doc.format != SBOM_FORMAT {
+                bail!("unexpected SBOM format: {}", sbom_doc.format);
+            }
 
-    let sbom_bytes = files
-        .get("sbom.json")
-        .cloned()
-        .ok_or_else(|| anyhow!("sbom.json missing from archive"))?;
-    let sbom_doc: SbomDocument =
-        serde_json::from_slice(&sbom_bytes).context("sbom.json is not valid JSON")?;
-    if sbom_doc.format != SBOM_FORMAT {
-        bail!("unexpected SBOM format: {}", sbom_doc.format);
+            let mut warnings = Vec::new();
+            verify_sbom(&files, &sbom_doc.files)?;
+            verify_signature(
+                &files,
+                &manifest_bytes,
+                &sbom_bytes,
+                &sbom_doc.files,
+                policy,
+                &mut warnings,
+            )?;
+
+            Ok(PackLoad {
+                manifest,
+                report: VerifyReport {
+                    signature_ok: true,
+                    sbom_ok: true,
+                    warnings,
+                },
+                sbom: sbom_doc.files,
+            })
+        }
+        ManifestModel::Gpack(manifest) => {
+            let manifest = *manifest;
+            let mut warnings = vec![format!(
+                "detected manifest schema {}; applying compatibility reader",
+                manifest.schema_version
+            )];
+
+            let (sbom, sbom_ok, sbom_bytes) = if let Some(sbom_bytes) = files.get("sbom.json") {
+                match serde_json::from_slice::<SbomDocument>(sbom_bytes) {
+                    Ok(sbom_doc) => {
+                        let mut ok = sbom_doc.format == SBOM_FORMAT;
+                        if !ok {
+                            warnings.push(format!("unexpected SBOM format: {}", sbom_doc.format));
+                        }
+                        match verify_sbom(&files, &sbom_doc.files) {
+                            Ok(()) => {}
+                            Err(err) => {
+                                warnings.push(err.to_string());
+                                ok = false;
+                            }
+                        }
+                        (sbom_doc.files, ok, Some(sbom_bytes.clone()))
+                    }
+                    Err(err) => {
+                        warnings.push(format!("sbom.json is not valid JSON: {err}"));
+                        (Vec::new(), false, Some(sbom_bytes.clone()))
+                    }
+                }
+            } else {
+                warnings.push("sbom.json missing; synthesized inventory for validation".into());
+                (synthesize_sbom(&files), false, None)
+            };
+
+            let signature_ok = match (
+                files.get(SIGNATURE_PATH),
+                files.get(SIGNATURE_CHAIN_PATH),
+                sbom_bytes.as_deref(),
+                sbom_ok,
+            ) {
+                (Some(_), Some(_), Some(sbom_bytes), true) => {
+                    match verify_signature(
+                        &files,
+                        &manifest_bytes,
+                        sbom_bytes,
+                        &sbom,
+                        policy,
+                        &mut warnings,
+                    ) {
+                        Ok(()) => true,
+                        Err(err) => {
+                            warnings.push(format!("signature verification failed: {err}"));
+                            false
+                        }
+                    }
+                }
+                (Some(_), Some(_), Some(_), false) => {
+                    warnings.push(
+                        "signature present but sbom validation failed; skipping verification"
+                            .into(),
+                    );
+                    false
+                }
+                (Some(_), Some(_), None, _) => {
+                    warnings.push(
+                        "signature present but sbom.json missing; skipping verification".into(),
+                    );
+                    false
+                }
+                (None, None, _, _) => {
+                    warnings.push("signature files missing; skipping verification".into());
+                    false
+                }
+                _ => {
+                    warnings.push("signature files incomplete; skipping verification".into());
+                    false
+                }
+            };
+
+            Ok(PackLoad {
+                manifest: convert_gpack_manifest(manifest, &files),
+                report: VerifyReport {
+                    signature_ok,
+                    sbom_ok,
+                    warnings,
+                },
+                sbom,
+            })
+        }
     }
-
-    let mut warnings = Vec::new();
-    verify_sbom(&files, &sbom_doc.files)?;
-    verify_signature(
-        &files,
-        &manifest_bytes,
-        &sbom_bytes,
-        &sbom_doc.files,
-        policy,
-        &mut warnings,
-    )?;
-
-    Ok(PackLoad {
-        manifest,
-        report: VerifyReport {
-            signature_ok: true,
-            sbom_ok: true,
-            warnings,
-        },
-        sbom: sbom_doc.files,
-    })
 }
 
 #[derive(Deserialize)]
@@ -408,6 +502,162 @@ fn normalize_entry_path(path: &Path) -> Result<String> {
     }
 
     Ok(normalized.join("/"))
+}
+
+#[derive(Debug)]
+enum ManifestModel {
+    Pack(Box<PackManifest>),
+    Gpack(Box<GpackManifest>),
+}
+
+fn decode_manifest(bytes: &[u8]) -> Result<ManifestModel> {
+    if let Ok(manifest) = serde_cbor::from_slice::<PackManifest>(bytes) {
+        return Ok(ManifestModel::Pack(Box::new(manifest)));
+    }
+
+    let manifest = decode_pack_manifest(bytes)?;
+    Ok(ManifestModel::Gpack(Box::new(manifest)))
+}
+
+fn synthesize_sbom(files: &HashMap<String, Vec<u8>>) -> Vec<SbomEntry> {
+    let mut entries: Vec<_> = files
+        .iter()
+        .filter(|(path, _)| *path != SIGNATURE_PATH && *path != SIGNATURE_CHAIN_PATH)
+        .map(|(path, data)| SbomEntry {
+            path: path.clone(),
+            size: data.len() as u64,
+            hash_blake3: hex_hash(data),
+            media_type: media_type_for(path).to_string(),
+        })
+        .collect();
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries
+}
+
+fn media_type_for(path: &str) -> &'static str {
+    if path.ends_with(".cbor") {
+        "application/cbor"
+    } else if path.ends_with(".json") {
+        "application/json"
+    } else if path.ends_with(".wasm") {
+        "application/wasm"
+    } else if path.ends_with(".yaml") || path.ends_with(".yml") {
+        "application/yaml"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn convert_gpack_manifest(
+    manifest: GpackManifest,
+    files: &HashMap<String, Vec<u8>>,
+) -> PackManifest {
+    let publisher = manifest.publisher.clone();
+    let entry_flows = derive_entry_flows(&manifest);
+    let imports = manifest
+        .dependencies
+        .iter()
+        .map(|dep| ImportRef {
+            pack_id: dep.pack_id.to_string(),
+            version_req: dep.version_req.to_string(),
+        })
+        .collect();
+    let flows = manifest.flows.iter().map(convert_gpack_flow).collect();
+    let components = manifest
+        .components
+        .iter()
+        .map(|component| {
+            let file_wasm = format!("components/{}.wasm", component.id);
+            ComponentEntry {
+                name: component.id.to_string(),
+                version: component.version.clone(),
+                file_wasm: file_wasm.clone(),
+                hash_blake3: component_hash(&file_wasm, files),
+                schema_file: None,
+                manifest_file: None,
+                world: Some(component.world.clone()),
+                capabilities: serde_json::to_value(&component.capabilities).ok(),
+            }
+        })
+        .collect();
+
+    PackManifest {
+        meta: PackMeta {
+            pack_version: crate::builder::PACK_VERSION,
+            pack_id: manifest.pack_id.to_string(),
+            version: manifest.version,
+            name: manifest.pack_id.to_string(),
+            kind: None,
+            description: None,
+            authors: if publisher.is_empty() {
+                Vec::new()
+            } else {
+                vec![publisher]
+            },
+            license: None,
+            homepage: None,
+            support: None,
+            vendor: None,
+            imports,
+            entry_flows,
+            created_at_utc: "1970-01-01T00:00:00Z".into(),
+            events: None,
+            repo: None,
+            messaging: None,
+            interfaces: Vec::new(),
+            annotations: Default::default(),
+            distribution: None,
+            components: Vec::new(),
+        },
+        flows,
+        components,
+        distribution: None,
+        component_descriptors: Vec::new(),
+    }
+}
+
+fn convert_gpack_flow(entry: &greentic_types::pack_manifest::PackFlowEntry) -> FlowEntry {
+    let flow_bytes = serde_json::to_vec(&entry.flow).unwrap_or_default();
+    let entry_point = entry
+        .entrypoints
+        .first()
+        .cloned()
+        .or_else(|| entry.flow.entrypoints.keys().next().cloned())
+        .unwrap_or_else(|| entry.id.to_string());
+
+    FlowEntry {
+        id: entry.id.to_string(),
+        kind: entry.flow.schema_version.clone(),
+        entry: entry_point,
+        file_yaml: format!("flows/{}/flow.ygtc", entry.id),
+        file_json: format!("flows/{}/flow.json", entry.id),
+        hash_blake3: hex_hash(&flow_bytes),
+    }
+}
+
+fn derive_entry_flows(manifest: &GpackManifest) -> Vec<String> {
+    let mut entries = Vec::new();
+    for flow in &manifest.flows {
+        if flow.entrypoints.is_empty() && flow.flow.entrypoints.is_empty() {
+            entries.push(flow.id.to_string());
+            continue;
+        }
+        entries.extend(flow.entrypoints.iter().cloned());
+        entries.extend(flow.flow.entrypoints.keys().cloned());
+    }
+    if entries.is_empty() {
+        entries.push(manifest.pack_id.to_string());
+    }
+    entries.sort();
+    entries.dedup();
+    entries
+}
+
+fn component_hash(path: &str, files: &HashMap<String, Vec<u8>>) -> String {
+    files
+        .get(path)
+        .map(|bytes| hex_hash(bytes))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
