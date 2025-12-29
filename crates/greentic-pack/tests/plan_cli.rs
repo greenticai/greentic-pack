@@ -206,6 +206,56 @@ fn plan_from_gtpack_cli() {
 }
 
 #[test]
+fn plan_from_gtpack_contains_messaging_subjects() {
+    let pack = sample_pack();
+    let path = pack.path().join("sample.gtpack");
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .args([
+            "plan",
+            path.to_str().unwrap(),
+            "--tenant",
+            "tenant.demo",
+            "--environment",
+            "prod",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let value: Value = serde_json::from_slice(&output).unwrap();
+    let messaging = value
+        .get("messaging")
+        .and_then(|val| val.as_object())
+        .expect("messaging plan");
+    assert_eq!(
+        messaging
+            .get("logical_cluster")
+            .and_then(|val| val.as_str()),
+        Some("default")
+    );
+
+    let subjects = messaging
+        .get("subjects")
+        .and_then(|val| val.as_array())
+        .expect("messaging subjects");
+    let subject = subjects
+        .iter()
+        .find(|entry| entry.get("name").and_then(|val| val.as_str()) == Some("primary"))
+        .expect("primary subject");
+    assert_eq!(
+        subject.get("purpose").and_then(|val| val.as_str()),
+        Some("messaging")
+    );
+    assert_eq!(
+        subject.get("durable").and_then(|val| val.as_bool()),
+        Some(true)
+    );
+}
+
+#[test]
 fn plan_from_directory_uses_packc_stub() {
     let pack = sample_pack();
     let pack_path = pack.path().join("sample.gtpack");

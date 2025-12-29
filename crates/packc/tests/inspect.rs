@@ -5,6 +5,7 @@ use assert_cmd::prelude::*;
 use greentic_pack::builder::{ComponentArtifact, FlowBundle, PackBuilder, PackMeta};
 use greentic_pack::messaging::{MessagingAdapter, MessagingAdapterKind, MessagingSection};
 use semver::Version;
+use serde_json::Value;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -31,6 +32,51 @@ fn inspect_reports_messaging_adapter() {
     assert!(
         stdout.contains(&adapter_name),
         "inspect output should include adapter name"
+    );
+
+    drop(temp_dir);
+}
+
+#[test]
+fn inspect_json_reports_messaging_section() {
+    let (temp_dir, pack_path, adapter_name) = build_pack_with_messaging();
+
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("packc"))
+        .current_dir(workspace_root())
+        .args(["inspect", "--pack", pack_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let manifest: Value = serde_json::from_slice(&output).expect("valid json");
+    let messaging = manifest
+        .get("meta")
+        .and_then(|meta| meta.get("messaging"))
+        .and_then(|val| val.as_object())
+        .expect("messaging section present");
+    let adapters = messaging
+        .get("adapters")
+        .and_then(|val| val.as_array())
+        .expect("adapters array present");
+    let adapter = adapters
+        .iter()
+        .find(|entry| {
+            entry
+                .get("name")
+                .and_then(|val| val.as_str())
+                .map(|name| name == adapter_name)
+                .unwrap_or(false)
+        })
+        .expect("adapter is listed");
+    assert_eq!(
+        adapter.get("kind").and_then(|val| val.as_str()),
+        Some("ingress")
+    );
+    assert_eq!(
+        adapter.get("component").and_then(|val| val.as_str()),
+        Some("demo.component")
     );
 
     drop(temp_dir);

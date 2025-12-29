@@ -172,6 +172,7 @@ fn assemble_manifest(
         secret_requirements: secret_requirements.to_vec(),
         signatures: PackSignatures::default(),
         bootstrap,
+        extensions: normalize_extensions(&config.extensions),
     };
 
     Ok(BuildProducts {
@@ -376,6 +377,12 @@ fn collect_assets(configs: &[AssetConfig], pack_root: &Path) -> Result<Vec<Asset
         });
     }
     Ok(assets)
+}
+
+fn normalize_extensions(
+    extensions: &Option<BTreeMap<String, greentic_types::ExtensionRef>>,
+) -> Option<BTreeMap<String, greentic_types::ExtensionRef>> {
+    extensions.as_ref().filter(|map| !map.is_empty()).cloned()
 }
 
 fn derive_pack_capabilities(
@@ -924,6 +931,7 @@ mod tests {
             dependencies: Vec::new(),
             flows: Vec::new(),
             assets: Vec::new(),
+            extensions: None,
         }
     }
 
@@ -992,6 +1000,7 @@ mod tests {
             secret_requirements: Vec::new(),
             signatures: PackSignatures::default(),
             bootstrap: None,
+            extensions: None,
         }
     }
 }

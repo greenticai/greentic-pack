@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use greentic_pack::builder::{ComponentArtifact, FlowBundle, PackBuilder, PackMeta, Provenance};
+use greentic_pack::builder::{
+    ComponentArtifact, FlowBundle, PackBuilder, PackMeta, Provenance, Signing,
+};
 use semver::Version;
 use serde_json::{Map, json};
 use tempfile::tempdir;
@@ -72,7 +74,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let provenance = Provenance {
-        builder: format!("greentic-pack@{}", env!("CARGO_PKG_VERSION")),
+        builder: "greentic-pack-demo".into(),
         git_commit: None,
         git_repo: None,
         toolchain: Some("rustc 1.85.0".into()),
@@ -84,6 +86,7 @@ fn main() -> anyhow::Result<()> {
     let result = PackBuilder::new(meta)
         .with_flow(flow)
         .with_component(component)
+        .with_signing(Signing::None)
         .with_provenance(provenance)
         .build(&out_path)?;
 

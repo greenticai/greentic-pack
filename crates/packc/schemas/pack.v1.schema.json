@@ -40,6 +40,16 @@
       ],
       "default": null
     },
+    "extensions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "$ref": "#/$defs/ExtensionRef"
+      },
+      "default": null
+    },
     "flow_files": {
       "type": "array",
       "default": [],
@@ -285,6 +295,40 @@
           }
         }
       }
+    },
+    "ExtensionRef": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inline": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "kind",
+        "version"
+      ]
     },
     "InterfaceBinding": {
       "type": "object",
