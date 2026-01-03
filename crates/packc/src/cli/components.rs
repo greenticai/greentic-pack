@@ -117,10 +117,10 @@ pub fn sync_components(
             default_component(chosen_id.clone(), rel_path.clone())
         };
 
-        if let Some(world) = infer_component_world(&discovered.abs_wasm_path) {
-            if component.world.trim().is_empty() || component.world == "greentic:component/stub" {
-                component.world = world;
-            }
+        if let Some(world) = infer_component_world(&discovered.abs_wasm_path)
+            && (component.world.trim().is_empty() || component.world == "greentic:component/stub")
+        {
+            component.world = world;
         }
 
         component.id = chosen_id;
@@ -260,10 +260,7 @@ fn infer_component_world(path: &Path) -> Option<String> {
     };
 
     let world = &resolve.worlds[world_id];
-    let pkg_id = match world.package {
-        Some(id) => id,
-        None => return None,
-    };
+    let pkg_id = world.package?;
     let pkg = &resolve.packages[pkg_id];
 
     let mut label = format!("{}:{}/{}", pkg.name.namespace, pkg.name.name, world.name);
