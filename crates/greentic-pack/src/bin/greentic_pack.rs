@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
-#[path = "common/events.rs"]
-mod events;
 #[path = "common/input.rs"]
 mod input;
 #[path = "common/inspect.rs"]
 mod inspect;
 #[path = "common/plan.rs"]
 mod plan_cmd;
+#[path = "common/providers.rs"]
+mod providers;
 
 #[derive(Parser, Debug)]
 #[command(name = "greentic-pack", version, about = "Greentic pack utilities")]
@@ -25,9 +25,9 @@ enum Command {
     Inspect(InspectArgs),
     /// Generate a DeploymentPlan from a pack archive or source directory.
     Plan(PlanArgs),
-    /// Events-related helpers.
+    /// Provider extension helpers.
     #[command(subcommand)]
-    Events(EventsCommand),
+    Providers(providers::ProvidersCommand),
 }
 
 #[derive(Args, Debug)]
@@ -68,34 +68,11 @@ struct PlanArgs {
     verbose: bool,
 }
 
-#[derive(Subcommand, Debug)]
-enum EventsCommand {
-    /// List event providers declared in a pack.
-    List(EventsListArgs),
-}
-
-#[derive(Args, Debug)]
-struct EventsListArgs {
-    /// Path to a .gtpack archive or pack source directory.
-    #[arg(value_name = "PATH")]
-    path: PathBuf,
-
-    /// Output format: table (default), json, yaml.
-    #[arg(long, value_enum, default_value_t = events::OutputFormat::Table)]
-    format: events::OutputFormat,
-
-    /// When set, print additional diagnostics (for directory builds).
-    #[arg(long)]
-    verbose: bool,
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Inspect(args) => inspect::run(&args.path, args.policy, args.json),
         Command::Plan(args) => plan_cmd::run(&args),
-        Command::Events(cmd) => match cmd {
-            EventsCommand::List(args) => events::list(&args),
-        },
+        Command::Providers(cmd) => providers::run(cmd),
     }
 }

@@ -111,6 +111,7 @@ Operators inspect and plan published packs via the `greentic-pack` CLI:
 ```bash
 greentic-pack inspect dist/demo.gtpack --policy devok
 greentic-pack plan dist/demo.gtpack --tenant tenant-demo --environment prod
+greentic-pack providers list --pack dist/demo.gtpack --json
 ```
 
 `plan` always operates on a `.gtpack` archive so that CI, dev machines, and
@@ -118,6 +119,10 @@ operators see identical behaviour. For convenience you can also point it at a
 pack source directory; the CLI shells out to `packc build --gtpack-out` to
 create a temporary archive before running the planner (set
 `GREENTIC_PACK_PLAN_PACKC=/path/to/packc` if `packc` is not on `PATH`).
+
+Use `greentic-dev pack new-provider` to scaffold a provider-oriented pack, then
+inspect the embedded provider extension via `greentic-pack providers info <id>
+--pack <path>`.
 
 ### Flow patterns
 

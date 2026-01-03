@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use greentic_types::{EnvId, TenantCtx, TenantId};
 
+pub mod components;
 pub mod config;
 pub mod gui;
 pub mod inspect;
@@ -50,6 +51,8 @@ pub enum Command {
     Build(BuildArgs),
     /// Lint a pack manifest, flows, and templates
     Lint(self::lint::LintArgs),
+    /// Sync pack.yaml components with files under components/
+    Components(self::components::ComponentsArgs),
     /// Scaffold a new pack directory
     New(new::NewArgs),
     /// Sign a pack manifest using an Ed25519 private key
@@ -129,6 +132,7 @@ pub fn run_with_cli(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Build(args) => build::run(&build::BuildOptions::from_args(args, &runtime)?)?,
         Command::Lint(args) => self::lint::handle(args, cli.json)?,
+        Command::Components(args) => self::components::handle(args, cli.json)?,
         Command::New(args) => new::handle(args, cli.json)?,
         Command::Sign(args) => self::sign::handle(args, cli.json)?,
         Command::Verify(args) => self::verify::handle(args, cli.json)?,

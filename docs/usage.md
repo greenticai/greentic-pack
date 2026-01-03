@@ -30,9 +30,10 @@ installed they're available on your `PATH`.
 5. **Ship the artifacts** – publish the resulting Wasm module (`pack.wasm`) and
    manifest/SBOM outputs to the desired distribution channel.
 
-For declaring event providers inside `pack.yaml`, see
-`docs/events-provider-packs.md`. The block is optional and validated by
-`packc lint`.
+For declaring providers inside `pack.yaml`, see
+`docs/events-provider-packs.md`. The provider extension is optional and
+validated by `packc lint`; scaffold a starter pack with `greentic-dev pack
+new-provider` and inspect it with `greentic-pack providers list --pack <path>`.
 
 For repo-oriented packs (source/scanner/signing/attestation/policy/oci),
 see `docs/repo-pack-types.md` for the schema, capabilities, and bindings

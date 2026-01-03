@@ -1,72 +1,81 @@
-# Events Provider Packs
+# Provider Extension Packs
 
-Packs can describe event providers so runtimes can discover brokers/sources/sinks/bridges without hard-coding transports. The `events` block in `pack.yaml` is optional and backwards compatible.
+Packs can describe providers so runtimes can discover brokers/sources/sinks/bridges without hard-coding transports. The provider extension lives under `extensions.greentic.provider-extension.v1` in `pack.yaml` and is optional/compatible with existing packs. Scaffold a starter with `greentic-dev pack new-provider`.
 
 ## Schema
 
 ```yaml
-events:
-  providers:
-    - name: "nats-core"                  # required, unique per pack
-      kind: broker                       # broker | source | sink | bridge
-      component: "nats-provider@1.0.0"   # component id/version
-      default_flow: "flows/events/nats/default.ygtc"  # optional canned flow
-      custom_flow: "flows/events/nats/custom.ygtc"    # optional override
-      capabilities:
-        transport: nats                  # nats | kafka | sqs | webhook | email | other:<string>
-        reliability: at_least_once       # at_most_once | at_least_once | effectively_once
-        ordering: per_key                # none | per_key | global
-        topics:
-          - "greentic.*"                 # optional topic patterns
+extensions:
+  greentic.provider-extension.v1:
+    kind: greentic.provider-extension.v1
+    version: 1.0.0
+    inline:
+      providers:
+        - provider_type: "nats-core"            # required, unique per pack
+          capabilities: ["messages"]            # optional hints
+          ops: ["publish", "subscribe"]
+          config_schema_ref: "schemas/nats-config.json" # local or remote refs
+          state_schema_ref: "schemas/nats-state.json"
+          docs_ref: "docs/nats.md"
+          runtime:
+            component_ref: "nats-provider@1.0.0"
+            export: "run"
+            world: "greentic:provider/schema-core@1.0.0"
 ```
 
-Fields map directly to the shared `EventProviderDescriptor` model:
+Fields map directly to the shared `ProviderDecl` model:
 
-- `name` – human-friendly identifier used in diagnostics and registries.
-- `kind` – declares the provider role (broker/source/sink/bridge).
-- `component` – the component instance that implements the provider.
-- `default_flow` / `custom_flow` – references to flows (e.g. under `flows/events/...`) that wire the provider into the runtime.
-- `capabilities` – optional hints about transport/reliability/ordering and supported topic patterns.
+- `provider_type` – identifier used in diagnostics and registries.
+- `capabilities` / `ops` – optional hints exposed by the provider.
+- `config_schema_ref` / `state_schema_ref` – references to JSON Schemas (local or remote).
+- `runtime` – component+export binding that implements the provider runtime.
+- `docs_ref` – optional docs reference for tooling.
 
 ## Examples
 
 NATS broker:
 
 ```yaml
-events:
-  providers:
-    - name: "nats-core"
-      kind: broker
-      component: "nats-provider@1.0.0"
-      default_flow: "flows/events/nats/default.ygtc"
-      capabilities:
-        transport: nats
-        reliability: at_least_once
-        ordering: per_key
-        topics:
-          - "greentic.>"
+extensions:
+  greentic.provider-extension.v1:
+    kind: greentic.provider-extension.v1
+    version: 1.0.0
+    inline:
+      providers:
+        - provider_type: "nats-core"
+          capabilities: ["messaging"]
+          ops: ["publish", "subscribe"]
+          config_schema_ref: "schemas/nats.json"
+          runtime:
+            component_ref: "nats-provider@1.0.0"
+            export: "run"
+            world: "greentic:provider/schema-core@1.0.0"
 ```
 
 Kafka broker (conceptual):
 
 ```yaml
-events:
-  providers:
-    - name: "kafka-core"
-      kind: broker
-      component: "kafka-provider@1.0.0"
-      custom_flow: "flows/events/kafka/custom.ygtc"
-      capabilities:
-        transport: kafka
-        reliability: at_least_once
-        ordering: per_key
-        topics:
-          - "greentic.repo.*"
+extensions:
+  greentic.provider-extension.v1:
+    kind: greentic.provider-extension.v1
+    version: 1.0.0
+    inline:
+      providers:
+        - provider_type: "kafka-core"
+          capabilities: ["messaging"]
+          ops: ["publish", "subscribe"]
+          config_schema_ref: "schemas/kafka.json"
+          runtime:
+            component_ref: "kafka-provider@1.0.0"
+            export: "run"
+            world: "greentic:provider/schema-core@1.0.0"
 ```
 
 ## Validation and discovery
 
-- `packc lint --in <pack-dir>` validates the `events.providers` block alongside flows/templates.
-- `greentic-pack events list <pack-path> [--format table|json|yaml]` lists declared providers from a source directory or `.gtpack`.
+- `packc lint --in <pack-dir>` validates the provider extension alongside flows/templates.
+- `greentic-pack providers list --pack <path> [--json]` lists declared providers from a source directory or `.gtpack`.
+- `greentic-pack providers info <id> --pack <path> [--json]` prints a specific provider declaration.
+- `greentic-pack providers validate --pack <path> [--strict]` validates the provider extension contents and local references.
 
-Treat the `events` block as optional; packs without it continue to parse and build normally.
+Treat the provider extension as optional; packs without it continue to parse and build normally.

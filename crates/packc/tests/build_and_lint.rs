@@ -54,7 +54,11 @@ fn new_pack_scaffold() {
         "flow missing"
     );
     assert!(
-        pack_dir.join("components").join("stub.wasm").exists(),
-        "stub component missing"
+        pack_dir.join("components").is_dir(),
+        "components directory missing"
+    );
+    assert!(
+        !pack_dir.join("components").join("stub.wasm").exists(),
+        "stub component should not be scaffolded"
     );
 }

@@ -21,7 +21,7 @@ pub fn handle(args: NewArgs, json: bool) -> Result<()> {
 
     write_pack_yaml(&root, &args.pack_id)?;
     write_flow(&root)?;
-    write_stub_component(&root)?;
+    create_components_dir(&root)?;
 
     if json {
         println!(
@@ -45,18 +45,7 @@ version: 0.1.0
 kind: application
 publisher: Greentic
 
-components:
-  - id: "{pack_id}.component"
-    version: "0.1.0"
-    world: "greentic:component/stub"
-    supports: ["messaging"]
-    profiles:
-      default: "default"
-      supported: ["default"]
-    capabilities:
-      wasi: {{}}
-      host: {{}}
-    wasm: "components/stub.wasm"
+components: []
 
 flows:
   - id: main
@@ -93,13 +82,8 @@ nodes:
     fs::write(&flow_path, FLOW).with_context(|| format!("failed to write {}", flow_path.display()))
 }
 
-fn write_stub_component(root: &Path) -> Result<()> {
+fn create_components_dir(root: &Path) -> Result<()> {
     let components_dir = root.join("components");
-    fs::create_dir_all(&components_dir)?;
-    let path = components_dir.join("stub.wasm");
-    if !path.exists() {
-        fs::write(&path, &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00][..])
-            .with_context(|| format!("failed to write {}", path.display()))?;
-    }
-    Ok(())
+    fs::create_dir_all(&components_dir)
+        .with_context(|| format!("failed to create {}", components_dir.display()))
 }

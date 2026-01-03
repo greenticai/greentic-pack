@@ -1,23 +1,25 @@
 use crate::path_safety::normalize_under_root;
 use anyhow::{Context, Result, bail};
+use greentic_types::pack_manifest::ExtensionInline;
+use greentic_types::provider::{PROVIDER_EXTENSION_ID, ProviderDecl, ProviderExtensionInline};
 use greentic_types::{
     ComponentCapabilities, ComponentProfiles, ExtensionRef, FlowKind, ResourceHints,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const PROVIDER_EXTENSION_KIND: &str = "greentic.ext.provider";
 const PROVIDER_RUNTIME_WORLD: &str = "greentic:provider/schema-core@1.0.0";
+const LEGACY_PROVIDER_EXTENSION_KIND: &str = "greentic.ext.provider";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PackConfig {
     pub pack_id: String,
     pub version: String,
     pub kind: String,
     pub publisher: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<BootstrapConfig>,
     #[serde(default)]
     pub components: Vec<ComponentConfig>,
@@ -27,11 +29,11 @@ pub struct PackConfig {
     pub flows: Vec<FlowConfig>,
     #[serde(default)]
     pub assets: Vec<AssetConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<BTreeMap<String, ExtensionRef>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ComponentConfig {
     pub id: String,
     pub version: String,
@@ -41,24 +43,24 @@ pub struct ComponentConfig {
     pub profiles: ComponentProfiles,
     pub capabilities: ComponentCapabilities,
     pub wasm: PathBuf,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operations: Vec<ComponentOperationConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_schema: Option<JsonValue>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceHints>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configurators: Option<ComponentConfiguratorConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ComponentOperationConfig {
     pub name: String,
     pub input_schema: JsonValue,
     pub output_schema: JsonValue,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FlowConfig {
     pub id: String,
     pub file: PathBuf,
@@ -68,7 +70,7 @@ pub struct FlowConfig {
     pub entrypoints: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DependencyConfig {
     pub alias: String,
     pub pack_id: String,
@@ -77,30 +79,30 @@ pub struct DependencyConfig {
     pub required_capabilities: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AssetConfig {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BootstrapConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_flow: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upgrade_flow: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installer_component: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ComponentConfiguratorConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub basic: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FlowKindLabel {
     Messaging,
@@ -199,7 +201,7 @@ fn validate_extensions(
             }
         }
 
-        if ext.kind == PROVIDER_EXTENSION_KIND {
+        if ext.kind == PROVIDER_EXTENSION_ID || ext.kind == LEGACY_PROVIDER_EXTENSION_KIND {
             validate_provider_extension(key, ext)?;
         }
     }
@@ -212,83 +214,57 @@ fn validate_provider_extension(key: &str, ext: &ExtensionRef) -> Result<()> {
         .inline
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("extensions[{key}] inline payload is required"))?;
-    let inline_obj = inline
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("extensions[{key}].inline must be an object"))?;
-    let providers = inline_obj
-        .get("providers")
-        .and_then(|val| val.as_array())
-        .ok_or_else(|| anyhow::anyhow!("extensions[{key}].inline.providers must be an array"))?;
+    let providers = match inline {
+        ExtensionInline::Provider(value) => value.providers.clone(),
+        ExtensionInline::Other(value) => {
+            serde_json::from_value::<ProviderExtensionInline>(value.clone())
+                .with_context(|| {
+                    format!("extensions[{key}].inline is not a valid provider extension")
+                })?
+                .providers
+        }
+    };
     if providers.is_empty() {
         bail!("extensions[{key}].inline.providers must not be empty");
     }
 
     for (idx, provider) in providers.iter().enumerate() {
-        let obj = provider.as_object().ok_or_else(|| {
-            anyhow::anyhow!("extensions[{key}].inline.providers[{idx}] must be an object")
-        })?;
-        let provider_type = require_string(obj, "provider_type", key, idx)?;
-        if provider_type.is_empty() {
-            bail!("extensions[{key}].inline.providers[{idx}].provider_type must not be empty");
-        }
-        require_string(obj, "config_schema_ref", key, idx)?;
-        require_string(obj, "state_schema_ref", key, idx)?;
-        require_string(obj, "docs_ref", key, idx)?;
-        validate_string_array(obj, "capabilities", key, idx)?;
-        validate_string_array(obj, "ops", key, idx)?;
-
-        let runtime = obj
-            .get("runtime")
-            .and_then(|val| val.as_object())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "extensions[{key}].inline.providers[{idx}].runtime must be an object"
-                )
-            })?;
-        let world = require_string(runtime, "world", key, idx)?;
-        if world != PROVIDER_RUNTIME_WORLD {
-            bail!(
-                "extensions[{key}].inline.providers[{idx}].runtime.world must be `{}`",
-                PROVIDER_RUNTIME_WORLD
-            );
-        }
-        require_string(runtime, "component_ref", key, idx)?;
-        require_string(runtime, "export", key, idx)?;
+        validate_provider_decl(provider, key, idx)?;
     }
 
     Ok(())
 }
 
-fn require_string<'a>(
-    map: &'a serde_json::Map<String, JsonValue>,
-    field: &str,
-    key: &str,
-    idx: usize,
-) -> Result<&'a str> {
-    map.get(field).and_then(|val| val.as_str()).ok_or_else(|| {
-        anyhow::anyhow!("extensions[{key}].inline.providers[{idx}].{field} must be a string")
-    })
+fn validate_provider_decl(provider: &ProviderDecl, key: &str, idx: usize) -> Result<()> {
+    if provider.provider_type.trim().is_empty() {
+        bail!("extensions[{key}].inline.providers[{idx}].provider_type must not be empty");
+    }
+    if provider.config_schema_ref.trim().is_empty() {
+        bail!("extensions[{key}].inline.providers[{idx}].config_schema_ref must not be empty");
+    }
+    if provider.runtime.world != PROVIDER_RUNTIME_WORLD {
+        bail!(
+            "extensions[{key}].inline.providers[{idx}].runtime.world must be `{}`",
+            PROVIDER_RUNTIME_WORLD
+        );
+    }
+    if provider.runtime.component_ref.trim().is_empty() || provider.runtime.export.trim().is_empty()
+    {
+        bail!(
+            "extensions[{key}].inline.providers[{idx}].runtime component_ref/export must not be empty"
+        );
+    }
+    validate_string_vec(&provider.capabilities, "capabilities", key, idx)?;
+    validate_string_vec(&provider.ops, "ops", key, idx)?;
+    Ok(())
 }
 
-fn validate_string_array(
-    map: &serde_json::Map<String, JsonValue>,
-    field: &str,
-    key: &str,
-    idx: usize,
-) -> Result<()> {
-    let entries = map
-        .get(field)
-        .and_then(|val| val.as_array())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "extensions[{key}].inline.providers[{idx}].{field} must be an array of strings"
-            )
-        })?;
+fn validate_string_vec(entries: &[String], field: &str, key: &str, idx: usize) -> Result<()> {
     if entries.is_empty() {
         bail!("extensions[{key}].inline.providers[{idx}].{field} must not be empty");
     }
     for (entry_idx, entry) in entries.iter().enumerate() {
-        if entry.as_str().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        if entry.trim().is_empty() {
             bail!(
                 "extensions[{key}].inline.providers[{idx}].{field}[{entry_idx}] must be a non-empty string"
             );
@@ -326,13 +302,15 @@ mod tests {
     fn provider_extension_validates() {
         let mut extensions = BTreeMap::new();
         extensions.insert(
-            PROVIDER_EXTENSION_KIND.to_string(),
+            PROVIDER_EXTENSION_ID.to_string(),
             ExtensionRef {
-                kind: PROVIDER_EXTENSION_KIND.into(),
+                kind: PROVIDER_EXTENSION_ID.into(),
                 version: "1.0.0".into(),
                 digest: Some("sha256:abc123".into()),
                 location: None,
-                inline: Some(provider_extension_inline()),
+                inline: Some(
+                    serde_json::from_value(provider_extension_inline()).expect("inline parse"),
+                ),
             },
         );
         validate_extensions(Some(&extensions), false).expect("provider extension should validate");
@@ -342,25 +320,29 @@ mod tests {
     fn provider_extension_missing_required_fields_fails() {
         let mut extensions = BTreeMap::new();
         extensions.insert(
-            PROVIDER_EXTENSION_KIND.to_string(),
+            PROVIDER_EXTENSION_ID.to_string(),
             ExtensionRef {
-                kind: PROVIDER_EXTENSION_KIND.into(),
+                kind: PROVIDER_EXTENSION_ID.into(),
                 version: "1.0.0".into(),
                 digest: None,
                 location: None,
-                inline: Some(json!({
-                    "providers": [{
-                        "provider_type": "",
-                        "capabilities": [],
-                        "ops": ["send"],
-                        "config_schema_ref": "schemas/config.json",
-                        "state_schema_ref": "schemas/state.json",
-                        "runtime": {
-                            "component_ref": "demo",
-                            "export": "provider"
-                        }
-                    }]
-                })),
+                inline: Some(
+                    serde_json::from_value(json!({
+                        "providers": [{
+                            "provider_type": "",
+                            "capabilities": [],
+                            "ops": ["send"],
+                            "config_schema_ref": "",
+                            "state_schema_ref": "schemas/state.json",
+                            "runtime": {
+                                "component_ref": "",
+                                "export": "",
+                                "world": "greentic:provider/schema-core@1.0.0"
+                            }
+                        }]
+                    }))
+                    .expect("inline parse"),
+                ),
             },
         );
         assert!(
@@ -375,7 +357,7 @@ mod tests {
         extensions.insert(
             "greentic.ext.provider".to_string(),
             ExtensionRef {
-                kind: PROVIDER_EXTENSION_KIND.into(),
+                kind: PROVIDER_EXTENSION_ID.into(),
                 version: "1.0.0".into(),
                 digest: None,
                 location: Some("oci://registry/extensions/provider".into()),
