@@ -10,6 +10,7 @@ use greentic_types::{
     PackManifest, PackSignatures, SecretRequirement, SecretScope, SemverReq, encode_pack_manifest,
 };
 use semver::Version;
+use serde_json::Value as JsonValue;
 use serde_yaml_bw::Value as YamlValue;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -312,8 +313,14 @@ fn build_flows(configs: &[FlowConfig]) -> Result<Vec<PackFlowEntry>> {
         let yaml_src = fs::read_to_string(&cfg.file)
             .with_context(|| format!("failed to read flow {}", cfg.file.display()))?;
 
-        let flow: Flow = compile_ygtc_str(&yaml_src)
+        let mut flow: Flow = compile_ygtc_str(&yaml_src)
             .with_context(|| format!("failed to compile {}", cfg.file.display()))?;
+        normalize_component_exec_nodes(&mut flow).with_context(|| {
+            format!(
+                "failed to normalize component.exec nodes in {}",
+                cfg.file.display()
+            )
+        })?;
 
         let flow_id = flow.id.to_string();
         if !seen.insert(flow_id.clone()) {
@@ -337,6 +344,62 @@ fn build_flows(configs: &[FlowConfig]) -> Result<Vec<PackFlowEntry>> {
     }
 
     Ok(entries)
+}
+
+fn normalize_component_exec_nodes(flow: &mut Flow) -> Result<()> {
+    for (node_id, node) in flow.nodes.iter_mut() {
+        if node.component.id.as_str() != "component.exec" {
+            continue;
+        }
+
+        let payload = node
+            .input
+            .mapping
+            .as_object()
+            .cloned()
+            .ok_or_else(|| anyhow!("component.exec node {} must map to an object", node_id))?;
+
+        let component_id = payload
+            .get("component")
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| {
+                anyhow!(
+                    "component.exec node {} missing string component field",
+                    node_id
+                )
+            })?;
+        node.component = greentic_types::flow::ComponentRef {
+            id: ComponentId::new(component_id).context("invalid component id")?,
+            pack_alias: node.component.pack_alias.clone().or_else(|| {
+                payload
+                    .get("pack_alias")
+                    .and_then(JsonValue::as_str)
+                    .map(String::from)
+            }),
+            operation: node.component.operation.clone().or_else(|| {
+                payload
+                    .get("operation")
+                    .and_then(JsonValue::as_str)
+                    .map(String::from)
+            }),
+        };
+
+        let mut payload = payload;
+        if let Some(op) = node.component.operation.as_deref() {
+            let needs_op = match payload.get("operation") {
+                Some(JsonValue::String(existing)) => existing.trim().is_empty(),
+                None => true,
+                _ => true,
+            };
+            if needs_op {
+                payload.insert("operation".to_string(), JsonValue::String(op.to_string()));
+            }
+        }
+
+        node.input.mapping = JsonValue::Object(payload);
+    }
+
+    Ok(())
 }
 
 fn build_dependencies(configs: &[crate::config::DependencyConfig]) -> Result<Vec<PackDependency>> {

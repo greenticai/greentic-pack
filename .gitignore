@@ -4,3 +4,4 @@ dist/
 **/.packc/
 .DS_Store
 examples/.DS_Store
+.greentic/

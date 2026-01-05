@@ -1,7 +1,9 @@
 use assert_cmd::prelude::*;
 use packc::config::PackConfig;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -17,10 +19,29 @@ fn tool_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn online() -> bool {
+    if std::env::var("GREENTIC_PACK_OFFLINE").is_ok() {
+        return false;
+    }
+    let addr = ("index.crates.io", 443)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut iter| iter.next());
+    if let Some(addr) = addr {
+        std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok()
+    } else {
+        false
+    }
+}
+
 #[test]
 fn end_to_end_component_pack_workflow() {
     if !tool_available("greentic-component") {
         panic!("greentic-component not installed; required for this E2E workflow test");
+    }
+    if !online() {
+        eprintln!("skipping end_to_end_component_pack_workflow: offline environment");
+        return;
     }
 
     let temp = tempfile::tempdir().expect("temp dir");

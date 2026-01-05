@@ -223,9 +223,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64ct"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e050f626429857a27ddccb31e0aca21356bfa709c04041aefddac081a8f068a"
+checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
 
 [[package]]
 name = "bit-set"
@@ -1154,9 +1154,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-flow"
-version = "0.4.8"
+version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0c712e887fdc4e83a3984ae96b2a543896815fd4e9cd34e19c357aa5b47173"
+checksum = "1fc31113d57952eca9dc496d62e807c5d59fc663aad1bdd580d7d83a24a2f09d"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1178,9 +1178,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.70"
+version = "0.4.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f18b640a659b860af2c151b8c1b3f68dac9476968050de808868055190eda2"
+checksum = "4ff3257f8176ab46398d9f261569b849c87f1a78a420d0cfa829ab325e663d60"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1195,9 +1195,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.70"
+version = "0.4.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27cc08474f13f29bf9ef96810c7cf752772e3e1923aeda3719a2d0bbba13f4b4"
+checksum = "2bbfe763b10cb5609de6de254967d41cebdcb01c7f5374bda8cacc218da42889"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2092,7 +2092,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -2102,11 +2102,11 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.32"
+version = "0.4.33"
 
 [[package]]
 name = "packc"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2941,9 +2941,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.112"
+version = "2.0.113"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21f182278bf2d2bcb3c88b1b08a37df029d71ce3d3ae26168e3c653b213b99d4"
+checksum = "678faa00651c9eb72dd2020cbdf275d92eccb2400d568e419efdd64838145cb4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3102,9 +3102,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-stream"
-version = "0.1.17"
+version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eca58d7bba4a75707817a2c44174253f9236b2d5fbd055602e9d5c07c139a047"
+checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
 dependencies = [
  "futures-core",
  "pin-project-lite",
@@ -3113,9 +3113,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.17"
+version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2efa149fe76073d6e8fd97ef4f4eca7b67f599660115591483572e406e165594"
+checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
 dependencies = [
  "bytes",
  "futures-core",
@@ -4354,9 +4354,9 @@ checksum = "40990edd51aae2c2b6907af74ffb635029d5788228222c4bb811e9351c0caad3"
 
 [[package]]
 name = "zmij"
-version = "1.0.8"
+version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "317f17ff091ac4515f17cc7a190d2769a8c9a96d227de5d64b500b01cda8f2cd"
+checksum = "dcb2c125bd7365735bebeb420ccb880265ed2d2bddcbcd49f597fdfe6bd5e577"
 
 [[package]]
 name = "zopfli"
