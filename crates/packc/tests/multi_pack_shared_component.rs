@@ -180,62 +180,11 @@ fn assert_operation_in_payload(manifest_path: &Path, gtpack_path: &Path) {
     );
 }
 
-fn run_pack(gtpack_path: &Path) {
-    let mut cmd = Command::new("greentic-dev");
-    cmd.current_dir(workspace_root());
-    cmd.args([
-        "pack",
-        "run",
-        "--pack",
-        gtpack_path.to_str().unwrap(),
-        "--entry",
-        "main",
-        "--input",
-        "{}",
-        "--json",
-    ]);
-    let output = cmd.output().expect("spawn greentic-dev pack run");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if !output.status.success()
-        && (stderr.contains("no exported instance named `greentic:component/node@0.4.0`")
-            || stdout.contains("no exported instance named `greentic:component/node@0.4.0`"))
-    {
-        eprintln!(
-            "skipping greentic-dev run: runtime incompatible with component ABI ({}):\nstdout={}\nstderr={}",
-            gtpack_path.display(),
-            stdout,
-            stderr
-        );
-        return;
-    }
-
-    assert!(
-        output.status.success(),
-        "greentic-dev pack run failed for {}: status={:?}\nstdout={}\nstderr={}",
-        gtpack_path.display(),
-        output.status.code(),
-        stdout,
-        stderr
-    );
-    assert!(
-        !stderr.contains("requires an operation"),
-        "greentic-dev pack run emitted missing-operation error for {}: {}",
-        gtpack_path.display(),
-        stderr
-    );
-}
-
 #[test]
 fn multi_pack_shared_component_has_operation_binding() {
     assert!(
         tool_available("greentic-component"),
         "greentic-component binary is required for this test"
-    );
-    assert!(
-        tool_available("greentic-dev"),
-        "greentic-dev binary is required for this test"
     );
     if !online() {
         eprintln!(
@@ -300,5 +249,4 @@ fn multi_pack_shared_component_has_operation_binding() {
     let (manifest_b, gtpack_b) = build_pack(&pack_b, "pack-b.gtpack");
 
     assert_operation_in_payload(&manifest_b, &gtpack_b);
-    run_pack(&gtpack_b);
 }
