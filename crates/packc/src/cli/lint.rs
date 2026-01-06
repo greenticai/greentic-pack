@@ -14,6 +14,10 @@ pub struct LintArgs {
     /// Root directory of the pack (must contain pack.yaml)
     #[arg(long = "in", value_name = "DIR")]
     pub input: PathBuf,
+
+    /// Allow OCI component refs in extensions to be tag-based (default requires sha256 digest)
+    #[arg(long = "allow-oci-tags", default_value_t = false)]
+    pub allow_oci_tags: bool,
 }
 
 pub fn handle(args: LintArgs, json: bool) -> Result<()> {
@@ -21,6 +25,7 @@ pub fn handle(args: LintArgs, json: bool) -> Result<()> {
     info!(path = %pack_dir.display(), "linting pack");
 
     let cfg = load_pack_config(&pack_dir)?;
+    crate::extensions::validate_components_extension(&cfg.extensions, args.allow_oci_tags)?;
 
     let mut compiled = 0usize;
     for flow in &cfg.flows {

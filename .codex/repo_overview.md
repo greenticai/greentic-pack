@@ -27,7 +27,7 @@
   **Role:** CI for lint/test, publishing to crates.io, and binstall release artifacts; pushes to `master` (or manual dispatch) run CI, publish crates, build binstall archives (`.tgz`), and upload them to a GitHub Release—no tag gating.
 
 ## 3. Work In Progress, TODOs, and Stubs
-- None identified in the current snapshot.
+- None identified after adding the greentic.components extension support (digest-pinned OCI refs via inline extensions with optional allow-tags flag).
 
 ## 4. Broken, Failing, or Conflicting Areas
 - No failing tests or known broken areas after the latest run.

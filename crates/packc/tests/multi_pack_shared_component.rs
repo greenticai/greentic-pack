@@ -233,12 +233,10 @@ fn multi_pack_shared_component_has_operation_binding() {
         tool_available("greentic-component"),
         "greentic-component binary is required for this test"
     );
-    if !tool_available("greentic-dev") {
-        eprintln!(
-            "skipping multi_pack_shared_component_has_operation_binding: greentic-dev missing"
-        );
-        return;
-    }
+    assert!(
+        tool_available("greentic-dev"),
+        "greentic-dev binary is required for this test"
+    );
     if !online() {
         eprintln!(
             "skipping multi_pack_shared_component_has_operation_binding: offline environment"

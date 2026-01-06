@@ -203,6 +203,7 @@ pub fn handle(args: Args, json_out: bool, runtime: &crate::runtime::RuntimeConte
         dry_run: false,
         secrets_req: None,
         default_secret_scope: None,
+        allow_oci_tags: false,
         runtime: runtime.clone(),
     };
     build::run(&build_opts)?;

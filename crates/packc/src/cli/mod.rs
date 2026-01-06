@@ -104,6 +104,10 @@ pub struct BuildArgs {
     /// Default secret scope to apply when missing (dev-only), format: env/tenant[/team]
     #[arg(long = "default-secret-scope", value_name = "ENV/TENANT[/TEAM]")]
     pub default_secret_scope: Option<String>,
+
+    /// Allow OCI component refs in extensions to be tag-based (default requires sha256 digest)
+    #[arg(long = "allow-oci-tags", default_value_t = false)]
+    pub allow_oci_tags: bool,
 }
 
 pub fn run() -> Result<()> {

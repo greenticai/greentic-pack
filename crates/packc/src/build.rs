@@ -1,6 +1,7 @@
 use crate::config::{
     AssetConfig, ComponentConfig, ComponentOperationConfig, FlowConfig, PackConfig,
 };
+use crate::extensions::validate_components_extension;
 use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow};
 use greentic_flow::compile_ygtc_str;
@@ -30,6 +31,7 @@ pub struct BuildOptions {
     pub dry_run: bool,
     pub secrets_req: Option<PathBuf>,
     pub default_secret_scope: Option<String>,
+    pub allow_oci_tags: bool,
     pub runtime: RuntimeContext,
 }
 
@@ -63,6 +65,7 @@ impl BuildOptions {
             dry_run: args.dry_run,
             secrets_req: args.secrets_req,
             default_secret_scope: args.default_secret_scope,
+            allow_oci_tags: args.allow_oci_tags,
             runtime: runtime.clone(),
         })
     }
@@ -87,6 +90,7 @@ pub fn run(opts: &BuildOptions) -> Result<()> {
         dependencies = config.dependencies.len(),
         "loaded pack.yaml"
     );
+    validate_components_extension(&config.extensions, opts.allow_oci_tags)?;
 
     let secret_requirements = aggregate_secret_requirements(
         &config.components,

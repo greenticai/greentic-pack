@@ -20,6 +20,10 @@ pub struct InspectArgs {
     /// Path to a pack source directory containing pack.yaml
     #[arg(long = "in", value_name = "DIR", conflicts_with = "pack")]
     pub input: Option<PathBuf>,
+
+    /// Allow OCI component refs in extensions to be tag-based (default requires sha256 digest)
+    #[arg(long = "allow-oci-tags", default_value_t = false)]
+    pub allow_oci_tags: bool,
 }
 
 pub fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> Result<()> {
@@ -31,7 +35,7 @@ pub fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> Result
     let (manifest, report) = if let Some(path) = args.pack {
         inspect_pack_file(&path)?
     } else {
-        inspect_source_dir(args.input.as_ref().unwrap(), runtime)?
+        inspect_source_dir(args.input.as_ref().unwrap(), runtime, args.allow_oci_tags)?
     };
 
     if json {
@@ -53,6 +57,7 @@ fn inspect_pack_file(path: &Path) -> Result<(PackManifest, VerifyReport)> {
 fn inspect_source_dir(
     dir: &Path,
     runtime: &RuntimeContext,
+    allow_oci_tags: bool,
 ) -> Result<(PackManifest, VerifyReport)> {
     let pack_dir = dir
         .canonicalize()
@@ -71,6 +76,7 @@ fn inspect_source_dir(
         dry_run: false,
         secrets_req: None,
         default_secret_scope: None,
+        allow_oci_tags,
         runtime: runtime.clone(),
     };
 
