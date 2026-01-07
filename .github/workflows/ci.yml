@@ -29,6 +29,8 @@ jobs:
       - name: Install greentic tooling
         run: |
           cargo binstall greentic-dev -y
+          # E2E component_pack tests require greentic-component; ensure it is present explicitly.
+          cargo binstall greentic-component -y --force
 
       - name: Install wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
