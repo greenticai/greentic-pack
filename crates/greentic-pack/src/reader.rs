@@ -8,10 +8,15 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use greentic_types::ComponentManifest;
 use greentic_types::decode_pack_manifest;
-use greentic_types::pack_manifest::PackManifest as GpackManifest;
+use greentic_types::pack::extensions::component_manifests::{
+    ComponentManifestIndexV1, EXT_COMPONENT_MANIFEST_INDEX_V1, ManifestEncoding,
+};
+use greentic_types::pack_manifest::{ExtensionInline, PackManifest as GpackManifest};
 use serde::Deserialize;
 use serde_json;
+use sha2::{Digest, Sha256};
 use x509_parser::pem::parse_x509_pem;
 use x509_parser::prelude::*;
 use zip::ZipArchive;
@@ -50,6 +55,8 @@ pub struct PackLoad {
     pub manifest: PackManifest,
     pub report: VerifyReport,
     pub sbom: Vec<SbomEntry>,
+    pub files: HashMap<String, Vec<u8>>,
+    pub gpack_manifest: Option<GpackManifest>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,10 +72,285 @@ impl PackVerifyResult {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ComponentManifestIndexState {
+    pub present: bool,
+    pub index: Option<ComponentManifestIndexV1>,
+    pub error: Option<String>,
+}
+
+impl ComponentManifestIndexState {
+    pub fn ok(&self) -> bool {
+        !self.present || self.error.is_none()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ComponentManifestFileStatus {
+    pub component_id: String,
+    pub manifest_file: String,
+    pub encoding: ManifestEncoding,
+    pub content_hash: Option<String>,
+    pub file_present: bool,
+    pub hash_ok: Option<bool>,
+    pub decoded: bool,
+    pub inline_match: Option<bool>,
+    pub error: Option<String>,
+}
+
+impl ComponentManifestFileStatus {
+    pub fn is_ok(&self) -> bool {
+        self.error.is_none()
+            && self.file_present
+            && self.decoded
+            && self.hash_ok.unwrap_or(true)
+            && self.inline_match.unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ManifestFileVerificationReport {
+    pub extension_present: bool,
+    pub extension_error: Option<String>,
+    pub entries: Vec<ComponentManifestFileStatus>,
+}
+
+impl ManifestFileVerificationReport {
+    pub fn ok(&self) -> bool {
+        if !self.extension_present {
+            return true;
+        }
+        self.extension_error.is_none()
+            && self.entries.iter().all(ComponentManifestFileStatus::is_ok)
+    }
+
+    pub fn first_error(&self) -> Option<String> {
+        if let Some(err) = &self.extension_error {
+            return Some(err.clone());
+        }
+        self.entries.iter().find_map(|status| status.error.clone())
+    }
+}
+
 pub fn open_pack(path: &Path, policy: SigningPolicy) -> Result<PackLoad, PackVerifyResult> {
     match open_pack_inner(path, policy) {
         Ok(result) => Ok(result),
         Err(err) => Err(PackVerifyResult::from_error(err)),
+    }
+}
+
+impl PackLoad {
+    pub fn component_manifest_index_v1(&self) -> ComponentManifestIndexState {
+        let mut state = ComponentManifestIndexState {
+            present: false,
+            index: None,
+            error: None,
+        };
+
+        let manifest = match self.gpack_manifest.as_ref() {
+            Some(manifest) => manifest,
+            None => return state,
+        };
+
+        let Some(extension) = manifest
+            .extensions
+            .as_ref()
+            .and_then(|map| map.get(EXT_COMPONENT_MANIFEST_INDEX_V1))
+        else {
+            return state;
+        };
+        state.present = true;
+
+        let inline = match extension.inline.as_ref() {
+            Some(inline) => inline,
+            None => {
+                state.error = Some("component manifest index missing inline payload".into());
+                return state;
+            }
+        };
+
+        let payload = match inline {
+            ExtensionInline::Other(value) => value,
+            _ => {
+                state.error =
+                    Some("component manifest index inline payload has unexpected shape".into());
+                return state;
+            }
+        };
+
+        match ComponentManifestIndexV1::from_extension_value(payload) {
+            Ok(index) => state.index = Some(index),
+            Err(err) => state.error = Some(err.to_string()),
+        }
+
+        state
+    }
+
+    pub fn get_component_manifest_prefer_file(
+        &self,
+        component_id: &str,
+    ) -> Result<Option<ComponentManifest>> {
+        let state = self.component_manifest_index_v1();
+        if let Some(err) = state.error {
+            return Err(anyhow!(err));
+        }
+
+        if let Some(entry) = state.index.as_ref().and_then(|index| {
+            index
+                .entries
+                .iter()
+                .find(|entry| entry.component_id == component_id)
+        }) {
+            if entry.encoding != ManifestEncoding::Cbor {
+                bail!("unsupported manifest encoding {:?}", entry.encoding);
+            }
+
+            if let Some(bytes) = self.files.get(&entry.manifest_file) {
+                if let Some(expected) = entry.content_hash.as_deref() {
+                    let actual = sha256_prefixed(bytes);
+                    if !expected.eq_ignore_ascii_case(&actual) {
+                        bail!(
+                            "manifest hash mismatch for {}: expected {}, got {}",
+                            entry.manifest_file,
+                            expected,
+                            actual
+                        );
+                    }
+                }
+
+                let decoded: ComponentManifest =
+                    serde_cbor::from_slice(bytes).context("decode component manifest")?;
+                if decoded.id.to_string() != entry.component_id {
+                    bail!(
+                        "manifest id {} does not match index component_id {}",
+                        decoded.id,
+                        entry.component_id
+                    );
+                }
+                return Ok(Some(decoded));
+            }
+        }
+
+        if let Some(component) = self.gpack_manifest.as_ref().and_then(|manifest| {
+            manifest
+                .components
+                .iter()
+                .find(|c| c.id.to_string() == component_id)
+        }) {
+            return Ok(Some(component.clone()));
+        }
+
+        Ok(None)
+    }
+
+    pub fn verify_component_manifest_files(&self) -> ManifestFileVerificationReport {
+        let mut report = ManifestFileVerificationReport {
+            extension_present: false,
+            extension_error: None,
+            entries: Vec::new(),
+        };
+
+        let state = self.component_manifest_index_v1();
+        if !state.present {
+            return report;
+        }
+        report.extension_present = true;
+
+        let Some(index) = state.index else {
+            report.extension_error = state.error;
+            return report;
+        };
+
+        let inline_components = self
+            .gpack_manifest
+            .as_ref()
+            .map(|manifest| &manifest.components);
+
+        for entry in index.entries {
+            let mut status = ComponentManifestFileStatus {
+                component_id: entry.component_id.clone(),
+                manifest_file: entry.manifest_file.clone(),
+                encoding: entry.encoding.clone(),
+                content_hash: entry.content_hash.clone(),
+                file_present: false,
+                hash_ok: None,
+                decoded: false,
+                inline_match: None,
+                error: None,
+            };
+
+            if entry.encoding != ManifestEncoding::Cbor {
+                status.error = Some("unsupported manifest encoding (expected cbor)".into());
+                report.entries.push(status);
+                continue;
+            }
+
+            let Some(bytes) = self.files.get(&entry.manifest_file) else {
+                status.error = Some("manifest file missing from archive".into());
+                report.entries.push(status);
+                continue;
+            };
+            status.file_present = true;
+
+            if let Some(expected) = entry.content_hash.as_deref() {
+                if !expected.starts_with("sha256:") {
+                    status.hash_ok = Some(false);
+                    status.error = Some("content_hash must use sha256:<hex>".into());
+                    report.entries.push(status);
+                    continue;
+                }
+                let actual = sha256_prefixed(bytes);
+                let matches = expected.eq_ignore_ascii_case(&actual);
+                status.hash_ok = Some(matches);
+                if !matches {
+                    status.error = Some(format!(
+                        "manifest hash mismatch: expected {}, got {}",
+                        expected, actual
+                    ));
+                }
+            }
+
+            match serde_cbor::from_slice::<ComponentManifest>(bytes) {
+                Ok(decoded) => {
+                    status.decoded = true;
+                    if decoded.id.to_string() != entry.component_id {
+                        status.error.get_or_insert_with(|| {
+                            format!(
+                                "component id mismatch: index has {}, manifest has {}",
+                                entry.component_id, decoded.id
+                            )
+                        });
+                    }
+
+                    if let Some(inline_components) = inline_components {
+                        if let Some(inline) = inline_components.iter().find(|c| c.id == decoded.id)
+                        {
+                            let matches = inline == &decoded;
+                            status.inline_match = Some(matches);
+                            if !matches {
+                                status.error.get_or_insert_with(|| {
+                                    "external manifest differs from inline manifest".into()
+                                });
+                            }
+                        } else {
+                            status.inline_match = Some(false);
+                            status.error.get_or_insert_with(|| {
+                                "component missing from inline manifest".into()
+                            });
+                        }
+                    }
+                }
+                Err(err) => {
+                    status
+                        .error
+                        .get_or_insert_with(|| format!("failed to decode manifest: {err}"));
+                }
+            }
+
+            report.entries.push(status);
+        }
+
+        report
     }
 }
 
@@ -90,6 +372,7 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
         .get("manifest.cbor")
         .cloned()
         .ok_or_else(|| anyhow!("manifest.cbor missing from archive"))?;
+    let decoded_gpack_manifest = decode_pack_manifest(&manifest_bytes).ok();
     match decode_manifest(&manifest_bytes).context("manifest.cbor is invalid")? {
         ManifestModel::Pack(manifest) => {
             let manifest = *manifest;
@@ -122,6 +405,8 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
                     warnings,
                 },
                 sbom: sbom_doc.files,
+                files,
+                gpack_manifest: decoded_gpack_manifest,
             })
         }
         ManifestModel::Gpack(manifest) => {
@@ -203,13 +488,15 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
             };
 
             Ok(PackLoad {
-                manifest: convert_gpack_manifest(manifest, &files),
+                manifest: convert_gpack_manifest(&manifest, &files),
                 report: VerifyReport {
                     signature_ok,
                     sbom_ok,
                     warnings,
                 },
                 sbom,
+                files,
+                gpack_manifest: Some(manifest),
             })
         }
     }
@@ -548,12 +835,18 @@ fn media_type_for(path: &str) -> &'static str {
     }
 }
 
+fn sha256_prefixed(bytes: &[u8]) -> String {
+    let mut sha = Sha256::new();
+    sha.update(bytes);
+    format!("sha256:{:x}", sha.finalize())
+}
+
 fn convert_gpack_manifest(
-    manifest: GpackManifest,
+    manifest: &GpackManifest,
     files: &HashMap<String, Vec<u8>>,
 ) -> PackManifest {
     let publisher = manifest.publisher.clone();
-    let entry_flows = derive_entry_flows(&manifest);
+    let entry_flows = derive_entry_flows(manifest);
     let imports = manifest
         .dependencies
         .iter()
@@ -585,7 +878,7 @@ fn convert_gpack_manifest(
         meta: PackMeta {
             pack_version: crate::builder::PACK_VERSION,
             pack_id: manifest.pack_id.to_string(),
-            version: manifest.version,
+            version: manifest.version.clone(),
             name: manifest.pack_id.to_string(),
             kind: None,
             description: None,

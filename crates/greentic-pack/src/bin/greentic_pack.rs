@@ -43,6 +43,10 @@ struct InspectArgs {
     /// Emit JSON output
     #[arg(long)]
     json: bool,
+
+    /// Verify component manifest files when present
+    #[arg(long)]
+    verify_manifest_files: bool,
 }
 
 #[derive(Args, Debug)]
@@ -71,7 +75,12 @@ struct PlanArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Inspect(args) => inspect::run(&args.path, args.policy, args.json),
+        Command::Inspect(args) => inspect::run(
+            &args.path,
+            args.policy,
+            args.json,
+            args.verify_manifest_files,
+        ),
         Command::Plan(args) => plan_cmd::run(&args),
         Command::Providers(cmd) => providers::run(cmd),
     }

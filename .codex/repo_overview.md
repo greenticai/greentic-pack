@@ -27,7 +27,7 @@
   **Role:** CI for lint/test, publishing to crates.io, and binstall release artifacts; pushes to `master` (or manual dispatch) run CI, publish crates, build binstall archives (`.tgz`), and upload them to a GitHub Release—no tag gating.
 
 ## 3. Work In Progress, TODOs, and Stubs
-- Pack builds now embed per-component manifest files and add a component-manifest index extension; inspect/verify enhancements may need follow-on polish if additional runtime hooks are desired.
+- Component manifest index extension now fully surfaced: greentic-pack reader/inspect can decode the index, prefer external manifests, and verify referenced manifest files (hashes, IDs, inline parity) via `--verify-manifest-files`; new tests cover happy-path, missing file, and hash-mismatch cases.
 
 ## 4. Broken, Failing, or Conflicting Areas
 - No failing tests or known broken areas after the latest run.

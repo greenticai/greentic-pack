@@ -1,9 +1,12 @@
 use std::io::Read;
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
-use greentic_pack::{SigningPolicy, VerifyReport, builder::PackManifest, open_pack};
+use greentic_pack::{
+    ComponentManifestIndexState, ManifestFileVerificationReport, SigningPolicy, VerifyReport,
+    builder::PackManifest, open_pack,
+};
 use greentic_types::SecretRequirement;
 use serde::Deserialize;
 use serde_json::json;
@@ -24,17 +27,52 @@ impl From<PolicyArg> for SigningPolicy {
     }
 }
 
-pub fn run(path: &Path, policy: PolicyArg, json: bool) -> Result<()> {
+pub fn run(path: &Path, policy: PolicyArg, json: bool, verify_manifest_files: bool) -> Result<()> {
     let load = open_pack(path, policy.into()).map_err(|err| anyhow!(err.message))?;
     let gui = load_gui_summary(path).ok();
     let secrets = load_secret_requirements(path).ok();
+    let index_state = load.component_manifest_index_v1();
+    let manifest_verify = if verify_manifest_files {
+        Some(load.verify_component_manifest_files())
+    } else {
+        None
+    };
+    if verify_manifest_files {
+        if !index_state.ok() {
+            bail!(
+                "component manifest index invalid: {}",
+                index_state
+                    .error
+                    .as_deref()
+                    .unwrap_or("unknown error decoding extension")
+            );
+        }
+        if let Some(report) = manifest_verify.as_ref()
+            && !report.ok()
+        {
+            let reason = report
+                .first_error()
+                .unwrap_or_else(|| "verification failed".to_string());
+            bail!("component manifest file verification failed: {reason}");
+        }
+    }
     if json {
-        print_json(&load.manifest, &load.report, &load.sbom, gui, secrets)?;
+        print_json(
+            &load.manifest,
+            &load.report,
+            &load.sbom,
+            &index_state,
+            manifest_verify.as_ref(),
+            gui,
+            secrets,
+        )?;
     } else {
         print_human(
             &load.manifest,
             &load.report,
             &load.sbom,
+            &index_state,
+            manifest_verify.as_ref(),
             gui.as_ref(),
             secrets.as_deref(),
         );
@@ -46,6 +84,8 @@ fn print_human(
     manifest: &PackManifest,
     report: &VerifyReport,
     sbom: &[greentic_pack::builder::SbomEntry],
+    index_state: &ComponentManifestIndexState,
+    manifest_verify: Option<&ManifestFileVerificationReport>,
     gui: Option<&GuiSummary>,
     secrets: Option<&[SecretRequirement]>,
 ) {
@@ -64,6 +104,44 @@ fn print_human(
         println!("Warnings:");
         for warning in &report.warnings {
             println!("  - {}", warning);
+        }
+    }
+
+    println!("Component manifest index:");
+    if !index_state.present {
+        println!("  not present");
+    } else if let Some(err) = &index_state.error {
+        println!("  invalid: {err}");
+    } else if let Some(index) = &index_state.index {
+        if index.entries.is_empty() {
+            println!("  present (no entries)");
+        } else {
+            println!("  entries:");
+            for entry in &index.entries {
+                let hash = entry.content_hash.as_deref().unwrap_or("no content_hash");
+                println!(
+                    "    - {} -> {} ({hash})",
+                    entry.component_id, entry.manifest_file
+                );
+            }
+        }
+    }
+
+    if let Some(report) = manifest_verify {
+        if !report.extension_present {
+            println!("Component manifest verification: index not present (skipped)");
+        } else if let Some(err) = &report.extension_error {
+            println!("Component manifest verification: FAILED - {err}");
+        } else {
+            let status = if report.ok() { "ok" } else { "FAILED" };
+            println!("Component manifest verification: {}", status);
+            for entry in &report.entries {
+                let summary = entry.error.as_deref().unwrap_or("verified");
+                println!(
+                    "  - {} -> {} [{}]",
+                    entry.component_id, entry.manifest_file, summary
+                );
+            }
         }
     }
     if let Some(secrets) = secrets {
@@ -148,6 +226,8 @@ fn print_json(
     manifest: &PackManifest,
     report: &VerifyReport,
     sbom: &[greentic_pack::builder::SbomEntry],
+    index_state: &ComponentManifestIndexState,
+    manifest_verify: Option<&ManifestFileVerificationReport>,
     gui: Option<GuiSummary>,
     secrets: Option<Vec<SecretRequirement>>,
 ) -> Result<()> {
@@ -164,6 +244,27 @@ fn print_json(
             "warnings": report.warnings,
         },
         "sbom": sbom,
+        "component_manifest_index": {
+            "present": index_state.present,
+            "error": index_state.error,
+            "entries": index_state.index.as_ref().map(|idx| &idx.entries),
+        },
+        "component_manifest_verification": manifest_verify.map(|report| json!({
+            "ok": report.ok(),
+            "extension_present": report.extension_present,
+            "extension_error": report.extension_error,
+            "entries": report.entries.iter().map(|entry| json!({
+                "component_id": entry.component_id,
+                "manifest_file": entry.manifest_file,
+                "encoding": entry.encoding,
+                "content_hash": entry.content_hash,
+                "file_present": entry.file_present,
+                "hash_ok": entry.hash_ok,
+                "decoded": entry.decoded,
+                "inline_match": entry.inline_match,
+                "error": entry.error,
+            })).collect::<Vec<_>>(),
+        })),
         "gui": gui,
         "secret_requirements": secrets,
     });

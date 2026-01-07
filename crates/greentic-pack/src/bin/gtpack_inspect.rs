@@ -24,9 +24,18 @@ struct Args {
     /// Emit JSON output
     #[arg(long)]
     json: bool,
+
+    /// Verify component manifest files when present
+    #[arg(long)]
+    verify_manifest_files: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    inspect::run(&args.path, args.policy, args.json)
+    inspect::run(
+        &args.path,
+        args.policy,
+        args.json,
+        args.verify_manifest_files,
+    )
 }
