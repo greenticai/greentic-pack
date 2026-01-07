@@ -91,7 +91,7 @@ fn compose_adapter_and_router(
     router: &std::path::Path,
     out: &std::path::Path,
 ) {
-    let status = Command::new("wasm-tools")
+    let output = Command::new("wasm-tools")
         .args([
             "compose",
             adapter.to_str().unwrap(),
@@ -100,9 +100,14 @@ fn compose_adapter_and_router(
             "-o",
             out.to_str().unwrap(),
         ])
-        .status()
+        .output()
         .expect("invoke wasm-tools compose");
-    assert!(status.success(), "composition should succeed");
+    assert!(
+        output.status.success(),
+        "composition should succeed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(out.exists(), "composed artifact should exist");
 }
 

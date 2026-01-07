@@ -107,9 +107,9 @@ type: messaging
 start: call
 nodes:
   call:
-    operation: {OPERATION}
     component.exec:
       component: {COMPONENT_ID}
+      operation: {OPERATION}
       input:
         text: "hi from {pack_name}"
     routing:

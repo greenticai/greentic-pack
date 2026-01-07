@@ -65,9 +65,9 @@ type: messaging
 start: call
 nodes:
   call:
-    operation: handle_message
     component.exec:
       component: {COMPONENT_ID}
+      operation: handle_message
       input:
         text: "hi"
     routing:
