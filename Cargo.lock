@@ -1154,9 +1154,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-flow"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fc31113d57952eca9dc496d62e807c5d59fc663aad1bdd580d7d83a24a2f09d"
+checksum = "a6db217df8221da9fe90706bbeef59415bc6f68d31e20aecbff730227427e7c1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.35"
+version = "0.4.36"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1257,9 +1257,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f824ac8b55aa50a3afc49f5dcdb8a8cb328fce218ba411010864643d467a62"
+checksum = "752e962e5b48285603d2a7d071d214a5d902a254f8aa3868183f6e041c378a42"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1283,9 +1283,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types-macros"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99c28a91fddb5942d47932e1bf65838f8057daf9c28f2abf96993e16aedde15d"
+checksum = "f7ca9721758b638256cf453070d3b677aaeedddad0a73f704b51531493ebedbf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2092,7 +2092,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.35"
+version = "0.4.36"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -2102,11 +2102,11 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.35"
+version = "0.4.36"
 
 [[package]]
 name = "packc"
-version = "0.4.35"
+version = "0.4.36"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2494,9 +2494,9 @@ dependencies = [
 
 [[package]]
 name = "regalloc2"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e249c660440317032a71ddac302f25f1d5dff387667bcc3978d1f77aa31ac34"
+checksum = "919cc500365f55230d2e2230cb813dd7c6fa5f907ad332d83ad3b862112cb69e"
 dependencies = [
  "allocator-api2",
  "bumpalo",
@@ -2767,9 +2767,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.148"
+version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3084b546a1dd6289475996f182a22aba973866ea8e8b02c51d9f46b1336a22da"
+checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
  "itoa",
  "memchr",
@@ -2941,9 +2941,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.113"
+version = "2.0.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "678faa00651c9eb72dd2020cbdf275d92eccb2400d568e419efdd64838145cb4"
+checksum = "d4d107df263a3013ef9b1879b0df87d706ff80f65a86ea879bd9c31f9b307c2a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4255,18 +4255,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.31"
+version = "0.8.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd74ec98b9250adb3ca554bdde269adf631549f51d8a8f8f0a10b50f1cb298c3"
+checksum = "1fabae64378cb18147bb18bca364e63bdbe72a0ffe4adf0addfec8aa166b2c56"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.31"
+version = "0.8.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8a8d209fdf45cf5138cbb5a506f6b52522a25afccc534d1475dad8e31105c6a"
+checksum = "c9c2d862265a8bb4471d87e033e730f536e2a285cc7cb05dbce09a2a97075f90"
 dependencies = [
  "proc-macro2",
  "quote",

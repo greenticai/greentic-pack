@@ -5,14 +5,21 @@ use crate::extensions::validate_components_extension;
 use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow};
 use greentic_flow::compile_ygtc_str;
+use greentic_types::pack::extensions::component_manifests::{
+    ComponentManifestIndexEntryV1, ComponentManifestIndexV1, EXT_COMPONENT_MANIFEST_INDEX_V1,
+    ManifestEncoding,
+};
 use greentic_types::{
     BootstrapSpec, ComponentCapability, ComponentConfigurators, ComponentId, ComponentManifest,
-    ComponentOperation, Flow, FlowId, PackDependency, PackFlowEntry, PackId, PackKind,
-    PackManifest, PackSignatures, SecretRequirement, SecretScope, SemverReq, encode_pack_manifest,
+    ComponentOperation, ExtensionInline, ExtensionRef, Flow, FlowId, PackDependency, PackFlowEntry,
+    PackId, PackKind, PackManifest, PackSignatures, SecretRequirement, SecretScope, SemverReq,
+    encode_pack_manifest,
 };
 use semver::Version;
+use serde_cbor;
 use serde_json::Value as JsonValue;
 use serde_yaml_bw::Value as YamlValue;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
@@ -141,9 +148,13 @@ struct BuildProducts {
     assets: Vec<AssetFile>,
 }
 
+#[derive(Clone)]
 struct ComponentBinary {
     id: String,
     source: PathBuf,
+    manifest_bytes: Vec<u8>,
+    manifest_path: String,
+    manifest_hash_sha256: String,
 }
 
 struct AssetFile {
@@ -162,6 +173,8 @@ fn assemble_manifest(
     let assets = collect_assets(&config.assets, pack_root)?;
     let component_manifests: Vec<_> = components.iter().map(|c| c.0.clone()).collect();
     let bootstrap = build_bootstrap(config, &flows, &component_manifests)?;
+    let extensions =
+        merge_component_manifest_extension(normalize_extensions(&config.extensions), &components)?;
 
     let manifest = PackManifest {
         schema_version: "pack-v1".to_string(),
@@ -177,7 +190,7 @@ fn assemble_manifest(
         secret_requirements: secret_requirements.to_vec(),
         signatures: PackSignatures::default(),
         bootstrap,
-        extensions: normalize_extensions(&config.extensions),
+        extensions,
     };
 
     Ok(BuildProducts {
@@ -218,9 +231,19 @@ fn build_components(
             dev_flows: BTreeMap::new(),
         };
 
+        let manifest_bytes =
+            serde_cbor::to_vec(&manifest).context("encode component manifest to cbor")?;
+        let mut sha = Sha256::new();
+        sha.update(&manifest_bytes);
+        let manifest_hash_sha256 = format!("sha256:{:x}", sha.finalize());
+        let manifest_path = format!("components/{}.manifest.cbor", cfg.id);
+
         let binary = ComponentBinary {
             id: cfg.id.clone(),
             source: cfg.wasm.clone(),
+            manifest_bytes,
+            manifest_path,
+            manifest_hash_sha256,
         };
 
         result.push((manifest, binary));
@@ -452,6 +475,42 @@ fn normalize_extensions(
     extensions.as_ref().filter(|map| !map.is_empty()).cloned()
 }
 
+fn merge_component_manifest_extension(
+    extensions: Option<BTreeMap<String, ExtensionRef>>,
+    components: &[(ComponentManifest, ComponentBinary)],
+) -> Result<Option<BTreeMap<String, ExtensionRef>>> {
+    let entries: Vec<_> = components
+        .iter()
+        .map(|(manifest, binary)| ComponentManifestIndexEntryV1 {
+            component_id: manifest.id.to_string(),
+            manifest_file: binary.manifest_path.clone(),
+            encoding: ManifestEncoding::Cbor,
+            content_hash: Some(binary.manifest_hash_sha256.clone()),
+        })
+        .collect();
+
+    let index = ComponentManifestIndexV1::new(entries);
+    let value = index
+        .to_extension_value()
+        .context("serialize component manifest index extension")?;
+
+    let ext = ExtensionRef {
+        kind: EXT_COMPONENT_MANIFEST_INDEX_V1.to_string(),
+        version: "v1".to_string(),
+        digest: None,
+        location: None,
+        inline: Some(ExtensionInline::Other(value)),
+    };
+
+    let mut map = extensions.unwrap_or_default();
+    map.insert(EXT_COMPONENT_MANIFEST_INDEX_V1.to_string(), ext);
+    if map.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(map))
+    }
+}
+
 fn derive_pack_capabilities(
     components: &[(ComponentManifest, ComponentBinary)],
 ) -> Vec<ComponentCapability> {
@@ -539,16 +598,20 @@ fn package_gtpack(out_path: &Path, manifest_bytes: &[u8], build: &BuildProducts)
 
     write_zip_entry(&mut writer, "manifest.cbor", manifest_bytes, options)?;
 
-    let mut component_entries: Vec<_> = build
-        .components
-        .iter()
-        .map(|c| (format!("components/{}.wasm", c.id), c.source.clone()))
-        .collect();
-    component_entries.sort_by(|a, b| a.0.cmp(&b.0));
-    for (logical, source) in component_entries {
-        let bytes = fs::read(&source)
-            .with_context(|| format!("failed to read component {}", source.display()))?;
-        write_zip_entry(&mut writer, &logical, &bytes, options)?;
+    let mut components = build.components.clone();
+    components.sort_by(|a, b| a.id.cmp(&b.id));
+    for comp in components {
+        let logical_wasm = format!("components/{}.wasm", comp.id);
+        let wasm_bytes = fs::read(&comp.source)
+            .with_context(|| format!("failed to read component {}", comp.source.display()))?;
+        write_zip_entry(&mut writer, &logical_wasm, &wasm_bytes, options)?;
+
+        write_zip_entry(
+            &mut writer,
+            &comp.manifest_path,
+            &comp.manifest_bytes,
+            options,
+        )?;
     }
 
     let mut asset_entries: Vec<_> = build
@@ -895,6 +958,13 @@ mod tests {
             components: vec![ComponentBinary {
                 id: component.id.to_string(),
                 source: wasm_path,
+                manifest_bytes: serde_cbor::to_vec(&component).expect("component cbor"),
+                manifest_path: format!("components/{}.manifest.cbor", component.id),
+                manifest_hash_sha256: {
+                    let mut sha = Sha256::new();
+                    sha.update(serde_cbor::to_vec(&component).expect("component cbor"));
+                    format!("sha256:{:x}", sha.finalize())
+                },
             }],
             assets: Vec::new(),
         };
