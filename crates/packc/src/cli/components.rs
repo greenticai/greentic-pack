@@ -13,14 +13,14 @@ use wit_component::DecodedWasm;
 use crate::config::{ComponentConfig, FlowKindLabel, PackConfig};
 use crate::path_safety::normalize_under_root;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ComponentUpdateStats {
     pub added: usize,
     pub removed: usize,
     pub total: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 struct DiscoveredComponent {
     rel_wasm_path: PathBuf,
     abs_wasm_path: PathBuf,

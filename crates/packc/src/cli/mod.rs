@@ -5,12 +5,17 @@ use std::{convert::TryFrom, path::PathBuf};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use greentic_types::{EnvId, TenantCtx, TenantId};
+use tokio::runtime::Runtime;
 
 pub mod components;
 pub mod config;
 pub mod gui;
+pub mod input;
 pub mod inspect;
 pub mod lint;
+pub mod plan;
+pub mod providers;
+pub mod resolve;
 pub mod sign;
 pub mod update;
 pub mod verify;
@@ -19,7 +24,7 @@ use crate::telemetry::set_current_tenant_ctx;
 use crate::{build, new, runtime};
 
 #[derive(Debug, Parser)]
-#[command(name = "packc", about = "Greentic pack builder CLI", version)]
+#[command(name = "greentic-pack", about = "Greentic pack CLI", version)]
 pub struct Cli {
     /// Logging filter (overrides PACKC_LOG)
     #[arg(long = "log", default_value = "info", global = true)]
@@ -65,10 +70,19 @@ pub enum Command {
     /// GUI-related tooling
     #[command(subcommand)]
     Gui(self::gui::GuiCommand),
-    /// Inspect a pack manifest from a .gtpack or source directory
+    /// Diagnose a pack archive (.gtpack) or source directory (runs validation)
+    Doctor(self::inspect::InspectArgs),
+    /// Deprecated alias for `doctor`
     Inspect(self::inspect::InspectArgs),
     /// Inspect resolved configuration (provenance and warnings)
     Config(self::config::ConfigArgs),
+    /// Generate a DeploymentPlan from a pack archive or source directory.
+    Plan(self::plan::PlanArgs),
+    /// Provider extension helpers.
+    #[command(subcommand)]
+    Providers(self::providers::ProvidersCommand),
+    /// Resolve component references and write pack.lock.json
+    Resolve(self::resolve::ResolveArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -76,6 +90,10 @@ pub struct BuildArgs {
     /// Root directory of the pack (must contain pack.yaml)
     #[arg(long = "in", value_name = "DIR")]
     pub input: PathBuf,
+
+    /// Skip running `packc update` before building (default: update first)
+    #[arg(long = "no-update", default_value_t = false)]
+    pub no_update: bool,
 
     /// Output path for the built Wasm component (legacy; writes a stub)
     #[arg(long = "out", value_name = "FILE")]
@@ -92,6 +110,14 @@ pub struct BuildArgs {
     /// Output path for the generated & canonical .gtpack archive
     #[arg(long = "gtpack-out", value_name = "FILE")]
     pub gtpack_out: Option<PathBuf>,
+
+    /// Optional path to pack.lock.json (default: <pack_dir>/pack.lock.json)
+    #[arg(long = "lock", value_name = "FILE")]
+    pub lock: Option<PathBuf>,
+
+    /// Bundle strategy for component artifacts (cache=embed wasm, none=refs only)
+    #[arg(long = "bundle", value_enum, default_value = "cache")]
+    pub bundle: crate::build::BundleMode,
 
     /// When set, the command validates input without writing artifacts
     #[arg(long)]
@@ -111,7 +137,7 @@ pub struct BuildArgs {
 }
 
 pub fn run() -> Result<()> {
-    run_with_cli(Cli::parse())
+    Runtime::new()?.block_on(run_with_cli(Cli::parse(), false))
 }
 
 /// Resolve the logging filter to use for telemetry initialisation.
@@ -120,7 +146,7 @@ pub fn resolve_env_filter(cli: &Cli) -> String {
 }
 
 /// Execute the CLI using a pre-parsed argument set.
-pub fn run_with_cli(cli: Cli) -> Result<()> {
+pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
     let runtime = runtime::resolve_runtime(
         Some(std::env::current_dir()?.as_path()),
         cli.cache_dir.as_deref(),
@@ -137,16 +163,26 @@ pub fn run_with_cli(cli: Cli) -> Result<()> {
     ));
 
     match cli.command {
-        Command::Build(args) => build::run(&build::BuildOptions::from_args(args, &runtime)?)?,
+        Command::Build(args) => {
+            build::run(&build::BuildOptions::from_args(args, &runtime)?).await?
+        }
         Command::Lint(args) => self::lint::handle(args, cli.json)?,
         Command::Components(args) => self::components::handle(args, cli.json)?,
         Command::Update(args) => self::update::handle(args, cli.json)?,
-        Command::New(args) => new::handle(args, cli.json)?,
+        Command::New(args) => new::handle(args, cli.json, &runtime).await?,
         Command::Sign(args) => self::sign::handle(args, cli.json)?,
         Command::Verify(args) => self::verify::handle(args, cli.json)?,
-        Command::Gui(cmd) => self::gui::handle(cmd, cli.json, &runtime)?,
-        Command::Inspect(args) => self::inspect::handle(args, cli.json, &runtime)?,
+        Command::Gui(cmd) => self::gui::handle(cmd, cli.json, &runtime).await?,
+        Command::Inspect(args) | Command::Doctor(args) => {
+            if warn_inspect_alias {
+                eprintln!("WARNING: `inspect` is deprecated; use `doctor`.");
+            }
+            self::inspect::handle(args, cli.json, &runtime).await?
+        }
         Command::Config(args) => self::config::handle(args, cli.json, &runtime)?,
+        Command::Plan(args) => self::plan::handle(&args)?,
+        Command::Providers(cmd) => self::providers::run(cmd)?,
+        Command::Resolve(args) => self::resolve::handle(args, &runtime).await?,
     }
 
     Ok(())

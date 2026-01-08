@@ -143,7 +143,11 @@ struct Summary {
     assets_copied: usize,
 }
 
-pub fn handle(args: Args, json_out: bool, runtime: &crate::runtime::RuntimeContext) -> Result<()> {
+pub async fn handle(
+    args: Args,
+    json_out: bool,
+    runtime: &crate::runtime::RuntimeContext,
+) -> Result<()> {
     let opts = ConvertOptions::try_from(args)?;
     let staging = TempDir::new().context("failed to create staging dir")?;
     let staging_root = staging.path();
@@ -200,13 +204,16 @@ pub fn handle(args: Args, json_out: bool, runtime: &crate::runtime::RuntimeConte
         manifest_out: pack_root.join("dist").join("manifest.cbor"),
         sbom_out: None,
         gtpack_out: Some(opts.out.clone()),
+        lock_path: pack_root.join("pack.lock.json"),
+        bundle: build::BundleMode::Cache,
         dry_run: false,
         secrets_req: None,
         default_secret_scope: None,
         allow_oci_tags: false,
         runtime: runtime.clone(),
+        skip_update: false,
     };
-    build::run(&build_opts)?;
+    build::run(&build_opts).await?;
 
     if json_out {
         let summary = Summary {

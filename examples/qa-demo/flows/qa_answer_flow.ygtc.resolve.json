@@ -1,0 +1,20 @@
+{
+  "flow": "qa_answer_flow.ygtc.resolve.json",
+  "nodes": {
+    "call_llm": {
+      "source": {
+        "digest": "sha256:deadbeef",
+        "kind": "repo",
+        "ref": "io.3bridges.components.llm.openai@1.0.0"
+      }
+    },
+    "package_messages": {
+      "source": {
+        "digest": "sha256:deadbeef",
+        "kind": "repo",
+        "ref": "io.3bridges.components.flow@1.0.0"
+      }
+    }
+  },
+  "schema_version": 1
+}

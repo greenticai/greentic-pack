@@ -388,19 +388,51 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
 
             let mut warnings = Vec::new();
             verify_sbom(&files, &sbom_doc.files)?;
-            verify_signature(
-                &files,
-                &manifest_bytes,
-                &sbom_bytes,
-                &sbom_doc.files,
-                policy,
-                &mut warnings,
-            )?;
+            let signature_ok = match (
+                files.get(SIGNATURE_PATH),
+                files.get(SIGNATURE_CHAIN_PATH),
+                Some(&sbom_bytes),
+            ) {
+                (Some(_), Some(_), Some(sbom_bytes)) => match verify_signature(
+                    &files,
+                    &manifest_bytes,
+                    sbom_bytes,
+                    &sbom_doc.files,
+                    policy,
+                    &mut warnings,
+                ) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        if matches!(policy, SigningPolicy::Strict) {
+                            return Err(err);
+                        }
+                        warnings.push(format!("signature verification failed: {err}"));
+                        false
+                    }
+                },
+                (None, None, _) => match policy {
+                    SigningPolicy::Strict => {
+                        bail!("signature file `{}` missing", SIGNATURE_PATH)
+                    }
+                    SigningPolicy::DevOk => {
+                        warnings.push("signature files missing; skipping verification".into());
+                        false
+                    }
+                },
+                _ => {
+                    match policy {
+                        SigningPolicy::Strict => bail!("signature files incomplete; missing chain"),
+                        SigningPolicy::DevOk => warnings
+                            .push("signature files incomplete; skipping verification".into()),
+                    }
+                    false
+                }
+            };
 
             Ok(PackLoad {
                 manifest,
                 report: VerifyReport {
-                    signature_ok: true,
+                    signature_ok,
                     sbom_ok: true,
                     warnings,
                 },
@@ -979,10 +1011,16 @@ mod tests {
     }
 
     #[test]
-    fn open_pack_rejects_missing_signature() {
+    fn open_pack_warns_missing_signature_dev_policy() {
         let (_dir, path) = build_pack(false);
-        let err = open_pack(&path, SigningPolicy::DevOk).unwrap_err();
-        assert!(err.message.contains("signature"));
+        let load = open_pack(&path, SigningPolicy::DevOk).expect("dev policy tolerates");
+        assert!(
+            load.report
+                .warnings
+                .iter()
+                .any(|w| w.contains("signature files missing")),
+            "expected warning about missing signatures"
+        );
     }
 
     #[test]

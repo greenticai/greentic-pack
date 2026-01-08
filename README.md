@@ -17,8 +17,8 @@ cargo install cargo-binstall   # run once
 cargo binstall greentic-pack packc
 ```
 
-This installs the `greentic-pack` and `gtpack-inspect` CLIs plus `packc` in one
-shot.
+This installs the canonical `greentic-pack` CLI plus the `packc` compatibility
+shim in one shot.
 
 ## Repository layout
 
@@ -53,7 +53,7 @@ CycloneDX SBOM, regenerates `crates/pack_component/src/data.rs`, and compiles
 while still validating the pack inputs.
 
 Passing `--gtpack-out dist/demo.gtpack` generates the canonical `.gtpack`
-archive; inspect it with `cargo run -p greentic-pack --bin gtpack-inspect -- --policy devok --json dist/demo.gtpack`
+archive; inspect it with `cargo run -p packc --bin greentic-pack -- --json doctor dist/demo.gtpack`
 to confirm the SBOM entries, flows, and templates embedded inside the archive.
 
 > ℹ️ The build step expects the `wasm32-wasip2` Rust target. Install it
@@ -109,9 +109,10 @@ accepted.
 Operators inspect and plan published packs via the `greentic-pack` CLI:
 
 ```bash
-greentic-pack inspect dist/demo.gtpack --policy devok
+greentic-pack doctor dist/demo.gtpack --json
 greentic-pack plan dist/demo.gtpack --tenant tenant-demo --environment prod
 greentic-pack providers list --pack dist/demo.gtpack --json
+greentic-pack resolve --in .                # writes pack.lock.json from flow sidecars
 ```
 
 `plan` always operates on a `.gtpack` archive so that CI, dev machines, and
@@ -123,6 +124,14 @@ create a temporary archive before running the planner (set
 Use `greentic-dev pack new-provider` to scaffold a provider-oriented pack, then
 inspect the embedded provider extension via `greentic-pack providers info <id>
 --pack <path>`.
+
+Bundle/resolve workflow:
+
+1) `greentic-pack update --strict` (creates sidecars, errors if nodes unmapped)
+2) `greentic-pack resolve` (writes pack.lock.json; honours `--offline`)
+3) `greentic-pack build --bundle=cache` for offline-friendly packs, or
+   `--bundle=none` for refs-only packs.
+4) `greentic-pack doctor` to surface inline vs remote component sources.
 
 ### Flow patterns
 
@@ -178,10 +187,20 @@ output via `--out`.
 `packc build` now aggregates component secret requirements, dedupes them, and
 embeds `secret-requirements.json` in the `.gtpack`. Use `--secrets-req` to
 inject additional requirements during migration, and `--default-secret-scope
-ENV/TENANT[/TEAM]` (dev-only) to fill missing scopes. `gtpack-inspect` surfaces
-the aggregated list in both human and JSON output. `greentic-pack plan` reads
-the embedded `secret-requirements.json` (falling back to component manifests)
-so deployment plans reflect the migration data.
+ENV/TENANT[/TEAM]` (dev-only) to fill missing scopes. `greentic-pack doctor`
+surfaces the aggregated list in both human and JSON output. `greentic-pack plan`
+reads the embedded `secret-requirements.json` (falling back to component
+manifests) so deployment plans reflect the migration data.
+
+#### Build behaviour
+
+- `packc build` runs `packc update` automatically to sync `pack.yaml` with the
+  `components/` and `flows/` directories. Pass `--no-update` to skip when you
+  know the manifest is already in sync.
+- When a component entry points at a directory, only runtime artifacts are
+  packaged: the resolved Wasm (`*.component.wasm` preferred) and manifest
+  (`component.json` -> CBOR). Source files (README, src/, tmp/, etc.) are
+  intentionally excluded from the `.gtpack`.
 
 ## Examples
 

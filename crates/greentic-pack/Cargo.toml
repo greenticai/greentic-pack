@@ -12,14 +12,6 @@ homepage = "https://github.com/greentic-ai/greentic-pack"
 [lib]
 path = "src/lib.rs"
 
-[[bin]]
-name = "gtpack-inspect"
-path = "src/bin/gtpack_inspect.rs"
-
-[[bin]]
-name = "greentic-pack"
-path = "src/bin/greentic_pack.rs"
-
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }

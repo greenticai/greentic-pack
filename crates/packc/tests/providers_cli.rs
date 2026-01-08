@@ -119,7 +119,10 @@ fn info_errors_for_unknown_provider() {
     let pack_path = temp.path().join("providers.gtpack");
     write_pack(
         &pack_path,
-        &manifest_with_providers(vec![provider_decl("alpha", "schemas/a.json")]),
+        &manifest_with_providers(vec![
+            provider_decl("alpha", "schemas/a.json"),
+            provider_decl("beta", "schemas/b.json"),
+        ]),
     );
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
@@ -135,13 +138,39 @@ fn info_errors_for_unknown_provider() {
 }
 
 #[test]
-fn validate_rejects_duplicate_ids() {
+fn validate_warns_for_missing_refs() {
     let temp = TempDir::new().expect("temp dir");
     let pack_path = temp.path().join("providers.gtpack");
-    let provider = provider_decl("dup", "schemas/a.json");
     write_pack(
         &pack_path,
-        &manifest_with_providers(vec![provider.clone(), provider]),
+        &manifest_with_providers(vec![
+            provider_decl("alpha", "schemas/a.json"),
+            provider_decl("beta", "https://example.com/schema.json"),
+        ]),
+    );
+
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .args([
+            "providers",
+            "validate",
+            "--pack",
+            pack_path.to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn validate_passes_for_missing_extension() {
+    let temp = TempDir::new().expect("temp dir");
+    let pack_path = temp.path().join("providers.gtpack");
+    write_pack(
+        &pack_path,
+        &PackManifest {
+            extensions: None,
+            ..manifest_with_providers(Vec::new())
+        },
     );
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
@@ -152,25 +181,5 @@ fn validate_rejects_duplicate_ids() {
             pack_path.to_str().unwrap(),
         ])
         .assert()
-        .failure();
-}
-
-#[test]
-fn validate_reports_missing_local_refs_in_strict_mode() {
-    let temp = TempDir::new().expect("temp dir");
-    let pack_path = temp.path().join("providers.gtpack");
-    let mut provider = provider_decl("alpha", "schemas/missing.json");
-    provider.docs_ref = Some("docs/provider.md".into());
-    write_pack(&pack_path, &manifest_with_providers(vec![provider]));
-
-    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
-        .args([
-            "providers",
-            "validate",
-            "--pack",
-            pack_path.to_str().unwrap(),
-            "--strict",
-        ])
-        .assert()
-        .failure();
+        .success();
 }

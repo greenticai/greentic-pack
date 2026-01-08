@@ -6,12 +6,12 @@
 
 ## 2. Main Components and Functionality
 - **Path:** `crates/packc`  
-  **Role:** Builder CLI for authoring and validating Greentic packs.  
-  **Key functionality:** Validates `pack.yaml`, enforces pack version/kind constraints (including `distribution-bundle`), loads flow and template assets, builds `.gtpack` archives with manifests and SBOM entries, generates Wasm components via `pack_component_template`, composes MCP router + adapter components, supports component descriptors (including `kind: software` with arbitrary artifact paths/types), and handles signing/verification of manifests. Provides `packc build`, `packc new` scaffolding, `packc sign/verify`, `packc inspect` (reads `.gtpack` or source dir and renders manifest summary/JSON), and telemetry setup; exposes library helpers (`BuildArgs`, signing APIs).
+  **Role:** Builder CLI for authoring and validating Greentic packs; now also hosts the canonical `greentic-pack` binary plus a deprecated `packc` shim.  
+  **Key functionality:** Validates `pack.yaml`, enforces pack version/kind constraints (including `distribution-bundle`), loads flow and template assets, builds `.gtpack` archives with manifests and SBOM entries, generates Wasm components via `pack_component_template`, composes MCP router + adapter components, supports component descriptors (including `kind: software` with arbitrary artifact paths/types), and handles signing/verification of manifests. Provides subcommands for build/lint/components/update/new/sign/verify/gui/doctor(aka inspect)/plan/providers/config; telemetry setup; exposes library helpers (`BuildArgs`, signing APIs).
 
 - **Path:** `crates/greentic-pack`  
-  **Role:** Library + CLI for inspecting packs and producing deployment plans.  
-  **Key functionality:** `reader` parses `.gtpack` archives, verifies hashes/signatures, and exposes manifest contents; `plan` builds deployment plans (optionally shelling out to `packc` when given a source directory); `builder` defines pack metadata (now includes `distribution-bundle` kind, distribution section, and component descriptors with optional `software` kind/`artifact_type` labels), SBOM entries, signing helpers, and archive writing; `events`/`messaging`/`repo` schemas validate sections. CLI commands: `inspect` (signature policy + JSON), `plan` (plan generation), and `events list` (providers).
+  **Role:** Library for inspecting packs and producing deployment plans (binaries now live in `packc`).  
+  **Key functionality:** `reader` parses `.gtpack` archives, verifies hashes/signatures, and exposes manifest contents (including component manifest index helpers and SBOM reading); `plan` builds deployment plans (optionally shelling out to `packc` when given a source directory); `builder` defines pack metadata (now includes `distribution-bundle` kind, distribution section, and component descriptors with optional `software` kind/`artifact_type` labels), SBOM entries, signing helpers, and archive writing; `events`/`messaging`/`repo` schemas validate sections.
 
 - **Path:** `crates/pack_component`  
   **Role:** Generated Wasm component that embeds manifest, flows, and templates produced by `packc`.  
@@ -27,7 +27,11 @@
   **Role:** CI for lint/test, publishing to crates.io, and binstall release artifacts; pushes to `master` (or manual dispatch) run CI, publish crates, build binstall archives (`.tgz`), and upload them to a GitHub Release—no tag gating.
 
 ## 3. Work In Progress, TODOs, and Stubs
-- Component manifest index extension now fully surfaced: greentic-pack reader/inspect can decode the index, prefer external manifests, and verify referenced manifest files (hashes, IDs, inline parity) via `--verify-manifest-files`; new tests cover happy-path, missing file, and hash-mismatch cases.
+- Component manifest index extension fully surfaced (reader/inspect, verification via `--verify-manifest-files`; tests for happy-path, missing file, hash-mismatch).
+- `packc build` now runs `packc update` by default (skip with `--no-update`) and, when a component `wasm` path is a directory, only packages runtime artifacts (resolved wasm + manifest.cbor converted from component.json). Tests guard against copying ancillary files and ensure update runs unless explicitly skipped.
+- Unified CLI surface: canonical `greentic-pack` binary (hosted in `packc`) now exposes the full packc command set plus `doctor` (inspect alias); `packc` binary emits a deprecation warning and delegates to the same runner. Local checks use `greentic-pack doctor` in place of `gtpack-inspect`.
+- New read-only helpers for flow resolve sidecars (`*.ygtc.resolve.json`) and deterministic `pack.lock.json` (schema_version=1) parsing/writing; discovery emits warnings when sidecars are missing but does not alter build behaviour.
+- New `greentic-pack resolve` command: reads flow resolve sidecars, resolves remote refs via greentic-distributor-client (supports `--offline`), computes digests for locals, and writes deterministic `pack.lock.json` (configurable via `--lock`).
 
 ## 4. Broken, Failing, or Conflicting Areas
 - No failing tests or known broken areas after the latest run.

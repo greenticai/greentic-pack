@@ -1,13 +1,21 @@
+use crate::cli::resolve::{self, ResolveArgs};
 use crate::config::{
     AssetConfig, ComponentConfig, ComponentOperationConfig, FlowConfig, PackConfig,
 };
 use crate::extensions::validate_components_extension;
+use crate::flow_resolve::enforce_sidecar_mappings;
 use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow};
 use greentic_flow::compile_ygtc_str;
+use greentic_pack::pack_lock::read_pack_lock;
+use greentic_types::component_source::ComponentSourceRef;
 use greentic_types::pack::extensions::component_manifests::{
     ComponentManifestIndexEntryV1, ComponentManifestIndexV1, EXT_COMPONENT_MANIFEST_INDEX_V1,
     ManifestEncoding,
+};
+use greentic_types::pack::extensions::component_sources::{
+    ArtifactLocationV1, ComponentSourceEntryV1, ComponentSourcesV1, EXT_COMPONENT_SOURCES_V1,
+    ResolvedComponentV1,
 };
 use greentic_types::{
     BootstrapSpec, ComponentCapability, ComponentConfigurators, ComponentId, ComponentManifest,
@@ -24,9 +32,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use tracing::info;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum BundleMode {
+    Cache,
+    None,
+}
 
 #[derive(Clone)]
 pub struct BuildOptions {
@@ -35,11 +50,14 @@ pub struct BuildOptions {
     pub manifest_out: PathBuf,
     pub sbom_out: Option<PathBuf>,
     pub gtpack_out: Option<PathBuf>,
+    pub lock_path: PathBuf,
+    pub bundle: BundleMode,
     pub dry_run: bool,
     pub secrets_req: Option<PathBuf>,
     pub default_secret_scope: Option<String>,
     pub allow_oci_tags: bool,
     pub runtime: RuntimeContext,
+    pub skip_update: bool,
 }
 
 impl BuildOptions {
@@ -62,6 +80,10 @@ impl BuildOptions {
         let gtpack_out = args
             .gtpack_out
             .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) });
+        let lock_path = args
+            .lock
+            .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) })
+            .unwrap_or_else(|| pack_dir.join("pack.lock.json"));
 
         Ok(Self {
             pack_dir,
@@ -69,16 +91,19 @@ impl BuildOptions {
             manifest_out,
             sbom_out,
             gtpack_out,
+            lock_path,
+            bundle: args.bundle,
             dry_run: args.dry_run,
             secrets_req: args.secrets_req,
             default_secret_scope: args.default_secret_scope,
             allow_oci_tags: args.allow_oci_tags,
             runtime: runtime.clone(),
+            skip_update: args.no_update,
         })
     }
 }
 
-pub fn run(opts: &BuildOptions) -> Result<()> {
+pub async fn run(opts: &BuildOptions) -> Result<()> {
     info!(
         pack_dir = %opts.pack_dir.display(),
         manifest_out = %opts.manifest_out.display(),
@@ -86,6 +111,22 @@ pub fn run(opts: &BuildOptions) -> Result<()> {
         dry_run = opts.dry_run,
         "building greentic pack"
     );
+
+    if !opts.skip_update {
+        // Keep pack.yaml in sync before building.
+        crate::cli::update::update_pack(&opts.pack_dir, false)?;
+    }
+
+    // Resolve component references into pack.lock.json before building to ensure
+    // manifests/extensions can rely on the lockfile contents.
+    resolve::handle(
+        ResolveArgs {
+            input: opts.pack_dir.clone(),
+            lock: Some(opts.lock_path.clone()),
+        },
+        &opts.runtime,
+    )
+    .await?;
 
     let config = crate::config::load_pack_config(&opts.pack_dir)?;
     info!(
@@ -105,7 +146,23 @@ pub fn run(opts: &BuildOptions) -> Result<()> {
         opts.default_secret_scope.as_deref(),
     )?;
 
-    let build = assemble_manifest(&config, &opts.pack_dir, &secret_requirements)?;
+    if !opts.lock_path.exists() {
+        anyhow::bail!(
+            "pack.lock.json is required (run `greentic-pack resolve`); missing: {}",
+            opts.lock_path.display()
+        );
+    }
+    let pack_lock = read_pack_lock(&opts.lock_path).with_context(|| {
+        format!(
+            "failed to read pack lock {} (try `greentic-pack resolve`)",
+            opts.lock_path.display()
+        )
+    })?;
+
+    let mut build = assemble_manifest(&config, &opts.pack_dir, &secret_requirements)?;
+    build.manifest.extensions =
+        merge_component_sources_extension(build.manifest.extensions, &pack_lock, opts.bundle)?;
+
     let manifest_bytes = encode_pack_manifest(&build.manifest)?;
     info!(len = manifest_bytes.len(), "encoded manifest.cbor");
 
@@ -135,7 +192,7 @@ pub fn run(opts: &BuildOptions) -> Result<()> {
                 source: req_path,
             });
         }
-        package_gtpack(gtpack_out, &manifest_bytes, &build)?;
+        package_gtpack(gtpack_out, &manifest_bytes, &build, opts.bundle)?;
         info!(gtpack_out = %gtpack_out.display(), "gtpack archive ready");
     }
 
@@ -169,7 +226,7 @@ fn assemble_manifest(
 ) -> Result<BuildProducts> {
     let components = build_components(&config.components)?;
     let component_ids: BTreeSet<String> = config.components.iter().map(|c| c.id.clone()).collect();
-    let flows = build_flows(&config.flows, &component_ids)?;
+    let flows = build_flows(&config.flows, &component_ids, pack_root)?;
     let dependencies = build_dependencies(&config.dependencies)?;
     let assets = collect_assets(&config.assets, pack_root)?;
     let component_manifests: Vec<_> = components.iter().map(|c| c.0.clone()).collect();
@@ -213,44 +270,181 @@ fn build_components(
         }
 
         info!(id = %cfg.id, wasm = %cfg.wasm.display(), "adding component");
-        let manifest = ComponentManifest {
-            id: ComponentId::new(cfg.id.clone()).context("invalid component id")?,
-            version: Version::parse(&cfg.version)
-                .context("invalid component version (expected semver)")?,
-            supports: cfg.supports.iter().map(|k| k.to_kind()).collect(),
-            world: cfg.world.clone(),
-            profiles: cfg.profiles.clone(),
-            capabilities: cfg.capabilities.clone(),
-            configurators: convert_configurators(cfg)?,
-            operations: cfg
-                .operations
-                .iter()
-                .map(operation_from_config)
-                .collect::<Result<Vec<_>>>()?,
-            config_schema: cfg.config_schema.clone(),
-            resources: cfg.resources.clone().unwrap_or_default(),
-            dev_flows: BTreeMap::new(),
-        };
-
-        let manifest_bytes =
-            serde_cbor::to_vec(&manifest).context("encode component manifest to cbor")?;
-        let mut sha = Sha256::new();
-        sha.update(&manifest_bytes);
-        let manifest_hash_sha256 = format!("sha256:{:x}", sha.finalize());
-        let manifest_path = format!("components/{}.manifest.cbor", cfg.id);
-
-        let binary = ComponentBinary {
-            id: cfg.id.clone(),
-            source: cfg.wasm.clone(),
-            manifest_bytes,
-            manifest_path,
-            manifest_hash_sha256,
-        };
+        let (manifest, binary) = resolve_component_artifacts(cfg)?;
 
         result.push((manifest, binary));
     }
 
     Ok(result)
+}
+
+fn resolve_component_artifacts(
+    cfg: &ComponentConfig,
+) -> Result<(ComponentManifest, ComponentBinary)> {
+    let resolved_wasm = resolve_component_wasm_path(&cfg.wasm)?;
+
+    let mut manifest = if let Some(from_disk) = load_component_manifest_from_disk(&resolved_wasm)? {
+        if from_disk.id.to_string() != cfg.id {
+            anyhow::bail!(
+                "component manifest id {} does not match pack.yaml id {}",
+                from_disk.id,
+                cfg.id
+            );
+        }
+        if from_disk.version.to_string() != cfg.version {
+            anyhow::bail!(
+                "component manifest version {} does not match pack.yaml version {}",
+                from_disk.version,
+                cfg.version
+            );
+        }
+        from_disk
+    } else {
+        manifest_from_config(cfg)?
+    };
+
+    // Ensure operations are populated from pack.yaml when missing in the on-disk manifest.
+    if manifest.operations.is_empty() && !cfg.operations.is_empty() {
+        manifest.operations = cfg
+            .operations
+            .iter()
+            .map(operation_from_config)
+            .collect::<Result<Vec<_>>>()?;
+    }
+
+    let manifest_bytes =
+        serde_cbor::to_vec(&manifest).context("encode component manifest to cbor")?;
+    let mut sha = Sha256::new();
+    sha.update(&manifest_bytes);
+    let manifest_hash_sha256 = format!("sha256:{:x}", sha.finalize());
+    let manifest_path = format!("components/{}.manifest.cbor", cfg.id);
+
+    let binary = ComponentBinary {
+        id: cfg.id.clone(),
+        source: resolved_wasm,
+        manifest_bytes,
+        manifest_path,
+        manifest_hash_sha256,
+    };
+
+    Ok((manifest, binary))
+}
+
+fn manifest_from_config(cfg: &ComponentConfig) -> Result<ComponentManifest> {
+    Ok(ComponentManifest {
+        id: ComponentId::new(cfg.id.clone()).context("invalid component id")?,
+        version: Version::parse(&cfg.version)
+            .context("invalid component version (expected semver)")?,
+        supports: cfg.supports.iter().map(|k| k.to_kind()).collect(),
+        world: cfg.world.clone(),
+        profiles: cfg.profiles.clone(),
+        capabilities: cfg.capabilities.clone(),
+        configurators: convert_configurators(cfg)?,
+        operations: cfg
+            .operations
+            .iter()
+            .map(operation_from_config)
+            .collect::<Result<Vec<_>>>()?,
+        config_schema: cfg.config_schema.clone(),
+        resources: cfg.resources.clone().unwrap_or_default(),
+        dev_flows: BTreeMap::new(),
+    })
+}
+
+fn resolve_component_wasm_path(path: &Path) -> Result<PathBuf> {
+    if path.is_file() {
+        return Ok(path.to_path_buf());
+    }
+    if !path.exists() {
+        anyhow::bail!("component path {} does not exist", path.display());
+    }
+    if !path.is_dir() {
+        anyhow::bail!(
+            "component path {} must be a file or directory",
+            path.display()
+        );
+    }
+
+    let mut component_candidates = Vec::new();
+    let mut wasm_candidates = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in fs::read_dir(&current)
+            .with_context(|| format!("failed to list components in {}", current.display()))?
+        {
+            let entry = entry?;
+            let entry_type = entry.file_type()?;
+            let entry_path = entry.path();
+            if entry_type.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+            if entry_type.is_file() && entry_path.extension() == Some(std::ffi::OsStr::new("wasm"))
+            {
+                let file_name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                if file_name.ends_with(".component.wasm") {
+                    component_candidates.push(entry_path);
+                } else {
+                    wasm_candidates.push(entry_path);
+                }
+            }
+        }
+    }
+
+    let choose = |mut list: Vec<PathBuf>| -> Result<PathBuf> {
+        list.sort();
+        if list.len() == 1 {
+            Ok(list.remove(0))
+        } else {
+            let options = list
+                .iter()
+                .map(|p| p.strip_prefix(path).unwrap_or(p).display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!(
+                "multiple wasm artifacts found under {}: {} (pick a single *.component.wasm or *.wasm)",
+                path.display(),
+                options
+            );
+        }
+    };
+
+    if !component_candidates.is_empty() {
+        return choose(component_candidates);
+    }
+    if !wasm_candidates.is_empty() {
+        return choose(wasm_candidates);
+    }
+
+    anyhow::bail!(
+        "no wasm artifact found under {}; expected *.component.wasm or *.wasm",
+        path.display()
+    );
+}
+
+fn load_component_manifest_from_disk(path: &Path) -> Result<Option<ComponentManifest>> {
+    let manifest_dir = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| anyhow!("component path {} has no parent directory", path.display()))?
+    };
+    let manifest_path = manifest_dir.join("component.json");
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+
+    let manifest: ComponentManifest = serde_json::from_slice(
+        &fs::read(&manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("{} is not a valid component.json", manifest_path.display()))?;
+
+    Ok(Some(manifest))
 }
 
 fn operation_from_config(cfg: &ComponentOperationConfig) -> Result<ComponentOperation> {
@@ -335,6 +529,7 @@ fn build_bootstrap(
 fn build_flows(
     configs: &[FlowConfig],
     component_ids: &BTreeSet<String>,
+    pack_root: &Path,
 ) -> Result<Vec<PackFlowEntry>> {
     let mut seen = BTreeSet::new();
     let mut entries = Vec::new();
@@ -363,6 +558,7 @@ fn build_flows(
         resolve_missing_component_ids(&mut flow, component_ids).with_context(|| {
             format!("failed to resolve component ids in {}", cfg.file.display())
         })?;
+        enforce_sidecar_mappings(pack_root, cfg, &flow)?;
 
         let flow_id = flow.id.to_string();
         if !seen.insert(flow_id.clone()) {
@@ -675,6 +871,70 @@ fn merge_component_manifest_extension(
     }
 }
 
+fn merge_component_sources_extension(
+    extensions: Option<BTreeMap<String, ExtensionRef>>,
+    lock: &greentic_pack::pack_lock::PackLockV1,
+    bundle: BundleMode,
+) -> Result<Option<BTreeMap<String, ExtensionRef>>> {
+    let mut entries = Vec::new();
+    for comp in &lock.components {
+        let source = match ComponentSourceRef::from_str(&comp.r#ref) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                eprintln!(
+                    "warning: skipping pack.lock entry `{}` with unsupported ref {}",
+                    comp.name, comp.r#ref
+                );
+                continue;
+            }
+        };
+        let artifact = match bundle {
+            BundleMode::None => ArtifactLocationV1::Remote,
+            BundleMode::Cache => ArtifactLocationV1::Inline {
+                wasm_path: format!("components/{}.wasm", comp.name),
+                manifest_path: None,
+            },
+        };
+        entries.push(ComponentSourceEntryV1 {
+            name: comp.name.clone(),
+            component_id: None,
+            source,
+            resolved: ResolvedComponentV1 {
+                digest: comp.digest.clone(),
+                signature: None,
+                signed_by: None,
+            },
+            artifact,
+            licensing_hint: None,
+            metering_hint: None,
+        });
+    }
+
+    if entries.is_empty() {
+        return Ok(extensions);
+    }
+
+    let payload = ComponentSourcesV1::new(entries)
+        .to_extension_value()
+        .context("serialize component_sources extension")?;
+
+    let ext = ExtensionRef {
+        kind: EXT_COMPONENT_SOURCES_V1.to_string(),
+        version: "v1".to_string(),
+        digest: None,
+        location: None,
+        inline: Some(ExtensionInline::Other(payload)),
+    };
+
+    let mut map = extensions.unwrap_or_default();
+    map.insert(EXT_COMPONENT_SOURCES_V1.to_string(), ext);
+    if map.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(map))
+    }
+}
+
 fn derive_pack_capabilities(
     components: &[(ComponentManifest, ComponentBinary)],
 ) -> Vec<ComponentCapability> {
@@ -747,7 +1007,12 @@ fn map_kind(raw: &str) -> Result<PackKind> {
     }
 }
 
-fn package_gtpack(out_path: &Path, manifest_bytes: &[u8], build: &BuildProducts) -> Result<()> {
+fn package_gtpack(
+    out_path: &Path,
+    manifest_bytes: &[u8],
+    build: &BuildProducts,
+    bundle: BundleMode,
+) -> Result<()> {
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -762,20 +1027,22 @@ fn package_gtpack(out_path: &Path, manifest_bytes: &[u8], build: &BuildProducts)
 
     write_zip_entry(&mut writer, "manifest.cbor", manifest_bytes, options)?;
 
-    let mut components = build.components.clone();
-    components.sort_by(|a, b| a.id.cmp(&b.id));
-    for comp in components {
-        let logical_wasm = format!("components/{}.wasm", comp.id);
-        let wasm_bytes = fs::read(&comp.source)
-            .with_context(|| format!("failed to read component {}", comp.source.display()))?;
-        write_zip_entry(&mut writer, &logical_wasm, &wasm_bytes, options)?;
+    if bundle != BundleMode::None {
+        let mut components = build.components.clone();
+        components.sort_by(|a, b| a.id.cmp(&b.id));
+        for comp in components {
+            let logical_wasm = format!("components/{}.wasm", comp.id);
+            let wasm_bytes = fs::read(&comp.source)
+                .with_context(|| format!("failed to read component {}", comp.source.display()))?;
+            write_zip_entry(&mut writer, &logical_wasm, &wasm_bytes, options)?;
 
-        write_zip_entry(
-            &mut writer,
-            &comp.manifest_path,
-            &comp.manifest_bytes,
-            options,
-        )?;
+            write_zip_entry(
+                &mut writer,
+                &comp.manifest_path,
+                &comp.manifest_bytes,
+                options,
+            )?;
+        }
     }
 
     let mut asset_entries: Vec<_> = build
@@ -998,6 +1265,7 @@ fn write_secret_requirements_file(
 mod tests {
     use super::*;
     use crate::config::BootstrapConfig;
+    use greentic_pack::pack_lock::{LockedComponent, PackLockV1};
     use greentic_types::flow::FlowKind;
     use serde_json::json;
     use std::io::Read;
@@ -1134,7 +1402,7 @@ mod tests {
         };
 
         let out = temp.path().join("demo.gtpack");
-        package_gtpack(&out, &manifest_bytes, &build).expect("package gtpack");
+        package_gtpack(&out, &manifest_bytes, &build, BundleMode::Cache).expect("package gtpack");
 
         let mut archive = ZipArchive::new(fs::File::open(&out).expect("open gtpack"))
             .expect("read gtpack archive");
@@ -1152,6 +1420,47 @@ mod tests {
             .find(|item| item.id == component.id)
             .expect("component preserved");
         assert_eq!(stored_component.dev_flows, component.dev_flows);
+    }
+
+    #[test]
+    fn component_sources_extension_respects_bundle() {
+        let lock = PackLockV1::new(vec![LockedComponent {
+            name: "demo.component".into(),
+            r#ref: "oci://ghcr.io/demo/component:1.0.0".into(),
+            digest: "sha256:deadbeef".into(),
+        }]);
+
+        let ext_none =
+            merge_component_sources_extension(None, &lock, BundleMode::None).expect("ext");
+        let value = match ext_none
+            .unwrap()
+            .get(EXT_COMPONENT_SOURCES_V1)
+            .and_then(|e| e.inline.as_ref())
+        {
+            Some(ExtensionInline::Other(v)) => v.clone(),
+            _ => panic!("missing inline"),
+        };
+        let decoded = ComponentSourcesV1::from_extension_value(&value).expect("decode");
+        assert!(matches!(
+            decoded.components[0].artifact,
+            ArtifactLocationV1::Remote
+        ));
+
+        let ext_cache =
+            merge_component_sources_extension(None, &lock, BundleMode::Cache).expect("ext");
+        let value = match ext_cache
+            .unwrap()
+            .get(EXT_COMPONENT_SOURCES_V1)
+            .and_then(|e| e.inline.as_ref())
+        {
+            Some(ExtensionInline::Other(v)) => v.clone(),
+            _ => panic!("missing inline"),
+        };
+        let decoded = ComponentSourcesV1::from_extension_value(&value).expect("decode");
+        assert!(matches!(
+            decoded.components[0].artifact,
+            ArtifactLocationV1::Inline { .. }
+        ));
     }
 
     #[test]

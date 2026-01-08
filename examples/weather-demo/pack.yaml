@@ -2,48 +2,54 @@ pack_id: greentic.weather.demo
 version: 0.1.0
 kind: application
 publisher: Greentic
-
 components:
-  - id: "templating.handlebars"
-    version: "0.0.1"
-    world: "greentic:component/stub"
-    supports: ["messaging"]
-    profiles:
-      default: "default"
-      supported: ["default"]
-    capabilities:
-      wasi: {}
-      host: {}
-    wasm: "components/templating.handlebars.wasm"
-  - id: "weather_api"
-    version: "0.0.1"
-    world: "greentic:component/stub"
-    supports: ["messaging"]
-    profiles:
-      default: "default"
-      supported: ["default"]
-    capabilities:
-      wasi: {}
-      host: {}
-    wasm: "components/weather_api.wasm"
-
-flows:
-  - id: weather_bot
-    file: flows/weather_bot.ygtc
-    tags: [default]
-    entrypoints: [default]
-
+- id: templating.handlebars
+  version: 0.0.1
+  world: root:component/root
+  supports:
+  - messaging
+  profiles:
+    default: default
+    supported:
+    - default
+  capabilities:
+    wasi:
+      random: false
+      clocks: false
+    host: {}
+  wasm: components/templating.handlebars.wasm
+- id: weather_api
+  version: 0.0.1
+  world: root:component/root
+  supports:
+  - messaging
+  profiles:
+    default: default
+    supported:
+    - default
+  capabilities:
+    wasi:
+      random: false
+      clocks: false
+    host: {}
+  wasm: components/weather_api.wasm
 dependencies:
-  - alias: "qa"
-    pack_id: "io.3bridges.components.qa"
-    version_req: "^1.0.0"
-    required_capabilities:
-      - "qa:process"
-  - alias: "mcp"
-    pack_id: "io.3bridges.components.mcp"
-    version_req: "^1.0.0"
-    required_capabilities:
-      - "mcp:exec"
-
+- alias: qa
+  pack_id: io.3bridges.components.qa
+  version_req: ^1.0.0
+  required_capabilities:
+  - qa:process
+- alias: mcp
+  pack_id: io.3bridges.components.mcp
+  version_req: ^1.0.0
+  required_capabilities:
+  - mcp:exec
+flows:
+- id: weather_bot
+  file: flows/weather_bot.ygtc
+  tags:
+  - default
+  entrypoints:
+  - default
 assets:
-  - path: templates/weather_now.hbs
+- path: templates/weather_now.hbs

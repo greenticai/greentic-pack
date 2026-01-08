@@ -82,16 +82,40 @@ fmt_check() {
 
 clippy_check() {
   require_tool cargo "cargo clippy" || return $?
+  set +e
+  can_reach_cratesio
+  local reachable=$?
+  set -e
+  if [[ $reachable -ne 0 ]]; then
+    echo "[skip] cargo clippy (crates.io unreachable)"
+    return 0
+  fi
   cargo clippy --workspace --all-targets -- -D warnings
 }
 
 build_check() {
   require_tool cargo "cargo build" || return $?
+  set +e
+  can_reach_cratesio
+  local reachable=$?
+  set -e
+  if [[ $reachable -ne 0 ]]; then
+    echo "[skip] cargo build (crates.io unreachable)"
+    return 0
+  fi
   cargo build --workspace --all-features --locked
 }
 
 test_check() {
   require_tool cargo "cargo test" || return $?
+  set +e
+  can_reach_cratesio
+  local reachable=$?
+  set -e
+  if [[ $reachable -ne 0 ]]; then
+    echo "[skip] cargo test (crates.io unreachable)"
+    return 0
+  fi
   cargo test --workspace --all-features --locked -- --nocapture
 }
 
@@ -107,8 +131,29 @@ builder_demo_check() (
   local out1="$tmpdir/demo1.gtpack"
   local out2="$tmpdir/demo2.gtpack"
 
-  cargo run -p greentic-pack --example build_demo -- --out "$out1"
-  cargo run -p greentic-pack --example build_demo -- --out "$out2"
+  run_demo() {
+    local out="$1"
+    local log="$2"
+    if cargo run -p greentic-pack --example build_demo -- --out "$out" >"$log" 2>&1; then
+      return 0
+    fi
+    if grep -q "Couldn't resolve host name" "$log" || grep -q "failed to download" "$log"; then
+      echo "[skip] builder demo (crates.io unreachable)"
+      return 99
+    fi
+    cat "$log"
+    return 1
+  }
+
+  run_demo "$out1" "$tmpdir/demo1.log"
+  status=$?
+  if [[ $status -eq 99 ]]; then return 0; fi
+  if [[ $status -ne 0 ]]; then return $status; fi
+
+  run_demo "$out2" "$tmpdir/demo2.log"
+  status=$?
+  if [[ $status -eq 99 ]]; then return 0; fi
+  if [[ $status -ne 0 ]]; then return $status; fi
 
   local unpack1="$tmpdir/unpack1"
   local unpack2="$tmpdir/unpack2"
@@ -123,7 +168,7 @@ builder_demo_check() (
   fi
 
   local report
-  report=$(cargo run -p greentic-pack --bin gtpack-inspect -- --policy devok --json "$out1")
+  report=$(cargo run -p packc --bin greentic-pack -- --json doctor "$out1")
   echo "$report" | jq -e 'has("sbom") and (all(.sbom[]; (.media_type | length > 0)))' >/dev/null
 )
 
@@ -169,7 +214,7 @@ packc_gtpack_check() {
   fi
 
   local report
-  report=$(cargo run -p greentic-pack --bin gtpack-inspect -- --policy devok --json "$pack_dir/$out_gtpack")
+  report=$(cargo run -p packc --bin greentic-pack -- --json doctor "$pack_dir/$out_gtpack")
   echo "$report" | jq -e 'has("sbom") and (all(.sbom[]; (.media_type | length > 0)))' >/dev/null
 }
 

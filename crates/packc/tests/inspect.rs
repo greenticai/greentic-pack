@@ -28,9 +28,22 @@ fn inspect_reports_messaging_adapter() {
         .stdout
         .clone();
 
-    let stdout = String::from_utf8(output).expect("utf8");
+    let payload: Value = serde_json::from_slice(&output).expect("valid json");
+    let adapters = payload
+        .get("manifest")
+        .and_then(|m| m.get("meta"))
+        .and_then(|meta| meta.get("messaging"))
+        .and_then(|val| val.get("adapters"))
+        .and_then(|val| val.as_array())
+        .expect("adapters array present");
     assert!(
-        stdout.contains(&adapter_name),
+        adapters.iter().any(|adapter| {
+            adapter
+                .get("name")
+                .and_then(|val| val.as_str())
+                .map(|name| name == adapter_name)
+                .unwrap_or(false)
+        }),
         "inspect output should include adapter name"
     );
 
@@ -50,9 +63,10 @@ fn inspect_json_reports_messaging_section() {
         .stdout
         .clone();
 
-    let manifest: Value = serde_json::from_slice(&output).expect("valid json");
-    let messaging = manifest
-        .get("meta")
+    let payload: Value = serde_json::from_slice(&output).expect("valid json");
+    let messaging = payload
+        .get("manifest")
+        .and_then(|m| m.get("meta"))
         .and_then(|meta| meta.get("messaging"))
         .and_then(|val| val.as_object())
         .expect("messaging section present");

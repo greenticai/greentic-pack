@@ -43,7 +43,7 @@ fn loveable_convert_assets_mode_produces_gtpack() -> anyhow::Result<()> {
     };
 
     let runtime = packc::runtime::resolve_runtime(Some(temp.path()), None, false, None)?;
-    loveable_convert::handle(args, false, &runtime)?;
+    tokio::runtime::Runtime::new()?.block_on(loveable_convert::handle(args, false, &runtime))?;
 
     let mut archive = ZipArchive::new(std::fs::File::open(&out)?)?;
 
@@ -117,7 +117,7 @@ fn spa_inference_ignores_404_and_generates_single_route() -> anyhow::Result<()> 
     };
 
     let runtime = packc::runtime::resolve_runtime(Some(temp.path()), None, false, None)?;
-    loveable_convert::handle(args, false, &runtime)?;
+    tokio::runtime::Runtime::new()?.block_on(loveable_convert::handle(args, false, &runtime))?;
 
     let mut archive = ZipArchive::new(std::fs::File::open(&out)?)?;
     let mut manifest_json = String::new();

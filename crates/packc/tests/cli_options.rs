@@ -160,6 +160,76 @@ cache_dir = "{}" "#,
 }
 
 #[test]
+fn packc_shim_emits_deprecation_warning() {
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("packc"))
+        .current_dir(workspace_root())
+        .args(["config", "--json", "--log", "warn"])
+        .output()
+        .expect("run packc config");
+
+    assert!(
+        output.status.success(),
+        "packc config failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`packc` is deprecated"),
+        "expected deprecation warning in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn greentic_pack_inspect_alias_warns_and_runs() {
+    let temp = TempDir::new().expect("temp dir");
+    let gtpack_out = temp.path().join("demo.gtpack");
+
+    let mut build_cmd = Command::new(assert_cmd::cargo::cargo_bin!("packc"));
+    build_cmd.current_dir(workspace_root()).args([
+        "build",
+        "--in",
+        "examples/weather-demo",
+        "--no-update",
+        "--out",
+        temp.path().join("component.wasm").to_str().unwrap(),
+        "--manifest",
+        temp.path().join("manifest.cbor").to_str().unwrap(),
+        "--sbom",
+        temp.path().join("sbom.cdx.json").to_str().unwrap(),
+        "--gtpack-out",
+        gtpack_out.to_str().unwrap(),
+        "--log",
+        "warn",
+    ]);
+    build_cmd.assert().success();
+
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .current_dir(workspace_root())
+        .args([
+            "inspect",
+            "--pack",
+            gtpack_out.to_str().unwrap(),
+            "--log",
+            "warn",
+        ])
+        .output()
+        .expect("run greentic-pack inspect");
+
+    assert!(
+        output.status.success(),
+        "inspect alias failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`inspect` is deprecated"),
+        "expected inspect alias warning in stderr, got: {stderr}"
+    );
+}
+
+#[test]
 fn gui_loveable_convert_cli_builds_gtpack() {
     let temp = TempDir::new().expect("temp dir");
     let assets_dir = temp.path().join("assets");

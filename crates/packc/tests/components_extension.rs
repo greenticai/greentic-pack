@@ -1,5 +1,6 @@
 use greentic_types::{decode_pack_manifest, pack_manifest::PackManifest};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
@@ -16,7 +17,9 @@ fn write_stub_wasm(path: &Path) {
 
 fn write_pack_files(dir: &Path, oci_ref: &str, allow_tags: bool) -> PathBuf {
     fs::create_dir_all(dir.join("flows")).expect("flows dir");
-    write_stub_wasm(&dir.join("components/demo.wasm"));
+    let wasm_path = dir.join("components/demo.wasm");
+    write_stub_wasm(&wasm_path);
+    let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
 
     let pack_yaml = format!(
         r#"pack_id: dev.local.oci-demo
@@ -73,6 +76,24 @@ nodes:
       - out: true
 "#;
     fs::write(dir.join("flows/main.ygtc"), flow).expect("flow file");
+    let sidecar = json!({
+        "schema_version": 1,
+        "flow": "flows/main.ygtc",
+        "nodes": {
+            "call": {
+                "source": {
+                    "kind": "local",
+                    "path": "../components/demo.wasm",
+                    "digest": digest
+                }
+            }
+        }
+    });
+    fs::write(
+        dir.join("flows/main.ygtc.resolve.json"),
+        serde_json::to_vec_pretty(&sidecar).unwrap(),
+    )
+    .expect("write sidecar");
 
     dir.join("pack.yaml")
 }

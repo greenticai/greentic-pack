@@ -27,7 +27,8 @@ fn write_stub_wasm(path: &Path) {
 
 fn write_pack_files(pack_dir: &Path) {
     fs::create_dir_all(pack_dir.join("flows")).expect("flows dir");
-    write_stub_wasm(&pack_dir.join("components/demo.wasm"));
+    let wasm_path = pack_dir.join("components/demo.wasm");
+    write_stub_wasm(&wasm_path);
 
     let pack_yaml = format!(
         r#"pack_id: dev.local.manifest-demo
@@ -60,6 +61,8 @@ flows:
     );
     fs::write(pack_dir.join("pack.yaml"), pack_yaml).expect("pack.yaml");
 
+    let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
+
     let flow = format!(
         r#"id: main
 type: messaging
@@ -76,6 +79,24 @@ nodes:
 "#
     );
     fs::write(pack_dir.join("flows/main.ygtc"), flow).expect("flow file");
+    let sidecar = serde_json::json!({
+        "schema_version": 1,
+        "flow": "flows/main.ygtc",
+        "nodes": {
+            "call": {
+                "source": {
+                    "kind": "local",
+                    "path": "../components/demo.wasm",
+                    "digest": digest
+                }
+            }
+        }
+    });
+    fs::write(
+        pack_dir.join("flows/main.ygtc.resolve.json"),
+        serde_json::to_vec_pretty(&sidecar).unwrap(),
+    )
+    .expect("write sidecar");
 }
 
 fn read_zip_entry(path: &Path, entry: &str) -> Vec<u8> {

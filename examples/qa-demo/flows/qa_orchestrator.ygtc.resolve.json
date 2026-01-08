@@ -1,0 +1,34 @@
+{
+  "flow": "qa_orchestrator.ygtc.resolve.json",
+  "nodes": {
+    "call_specialist": {
+      "source": {
+        "digest": "sha256:deadbeef",
+        "kind": "repo",
+        "ref": "io.3bridges.components.flow@1.0.0"
+      }
+    },
+    "collect_question": {
+      "source": {
+        "digest": "sha256:deadbeef",
+        "kind": "repo",
+        "ref": "io.3bridges.components.qa@1.0.0"
+      }
+    },
+    "load_profile": {
+      "source": {
+        "digest": "sha256:deadbeef",
+        "kind": "repo",
+        "ref": "io.3bridges.components.state@1.0.0"
+      }
+    },
+    "respond_to_user": {
+      "source": {
+        "digest": "sha256:deadbeef",
+        "kind": "repo",
+        "ref": "io.3bridges.components.messaging@1.0.0"
+      }
+    }
+  },
+  "schema_version": 1
+}

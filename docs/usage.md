@@ -12,8 +12,8 @@ cargo install cargo-binstall   # run once
 cargo binstall greentic-pack packc
 ```
 
-The install brings in `greentic-pack`, `gtpack-inspect`, and `packc`; once
-installed they're available on your `PATH`.
+The install brings in the canonical `greentic-pack` CLI plus the `packc`
+compatibility shim; once installed they're available on your `PATH`.
 
 ## Workflow overview
 
@@ -66,6 +66,12 @@ Usage: packc build --in <DIR> [--out <FILE>] [--manifest <FILE>]
 - `--log` – customise the tracing filter (defaults to `info`).
 - `--offline` – hard-disable any network activity (highest precedence; also see `GREENTIC_PACK_OFFLINE`).
 - `--cache-dir` – override the packc cache root (default: `<pack_dir>/.packc/`; env: `GREENTIC_PACK_CACHE_DIR`).
+- `--no-update` – skip the automatic `packc update` that normally runs before a build.
+
+When a component’s `wasm` path points to a directory, `packc build` only
+packages runtime artifacts: the resolved Wasm (`*.component.wasm` preferred)
+and the component manifest (`component.json` converted to CBOR). Source files
+(README, src/, tmp/, etc.) are deliberately excluded from the `.gtpack`.
 
 `packc` writes structured progress logs to stderr. When invoking inside CI, pass
 `--dry-run` to skip Wasm compilation if the target toolchain is unavailable.
@@ -74,23 +80,70 @@ warnings (add `--json` for machine-readable output).
 
 ### Inspecting packs
 
-`packc inspect` reads either a `.gtpack` archive (`--pack`) or a source
-directory (`--in`, containing `pack.yaml`). Source mode shells out to
-`packc build --gtpack-out` in a temp dir to guarantee parity with archive
-inspection. Examples:
+Use `greentic-pack doctor` (or the compatibility alias `inspect`) to read a
+`.gtpack` archive (`--pack`) or a source directory (`--in`, containing
+`pack.yaml`). Source mode shells out to `packc build --gtpack-out` in a temp
+dir to guarantee parity with archive inspection. Examples:
 
 ```bash
 # Inspect a built archive
-packc inspect --pack dist/demo.gtpack --json
+greentic-pack doctor dist/demo.gtpack --json
 
 # Inspect a source tree without prebuilding artifacts
-packc inspect --in examples/weather-demo
+greentic-pack doctor --in examples/weather-demo
 ```
 
 Output defaults to a human-readable summary (pack id/version/name, messaging
-adapters, component count, warnings). Pass `--json` to emit the full manifest as
-pretty JSON. Signature verification uses the dev policy when inspecting
-archives.
+adapters, component count, warnings). Pass `--json` to emit the manifest,
+verification report, and SBOM as JSON. Signature verification uses the dev
+policy when inspecting archives.
+
+### Flow resolve sidecars and pack.lock
+
+Authoring flows may be accompanied by optional `*.ygtc.resolve.json` sidecars
+that map flow nodes to component sources (`local`, `oci`, `repo`, or `store`).
+`greentic-pack update` now ensures every flow has a sidecar (creates an empty
+one if missing). `--strict` forces update to error when node mappings are
+absent. Builds require sidecars to map every node, so resolution is explicit
+instead of guessed.
+
+Packs can also carry a deterministic `pack.lock.json` (schema_version 1) beside
+`pack.yaml`:
+
+```json
+{
+  "schema_version": 1,
+  "components": [
+    { "name": "demo", "ref": "oci://example/demo:1.0.0", "digest": "sha256:..." }
+  ]
+}
+```
+
+Use `greentic-pack resolve --in <pack>` to aggregate sidecar refs, resolve
+remote digests via greentic-distributor-client (honouring `--offline`), and
+write a deterministic `pack.lock.json` (override output with `--lock <path>`).
+Builds expect this lockfile; if it is missing the error directs you to run
+`greentic-pack resolve`.
+
+### Bundling policy: refs-only vs cache
+
+`greentic-pack build` supports two bundle modes:
+
+- `--bundle=none` (refs-only): the `.gtpack` carries component source refs +
+  digests via the component_sources extension; no wasm blobs are embedded.
+- `--bundle=cache` (default): embed only runtime artifacts (wasm +
+  manifest.cbor) for each component; directories are **never** copied in full.
+  Remote refs are pulled from cache when available.
+
+Doctor output surfaces how many components are inline vs remote to make this
+mode visible.
+
+Recommended workflow:
+
+1. `greentic-pack update --strict` (create/validate sidecars)
+2. `greentic-pack resolve` (writes pack.lock.json; use `--offline` in CI if pre-resolved)
+3. `greentic-pack build --bundle=cache` (or `--bundle=none` for refs-only)
+4. `greentic-pack doctor dist/*.gtpack` (CI smoke)
 
 ### GUI pack converter (Loveable)
 
@@ -158,7 +211,7 @@ Outputs:
 
 When you pass `--gtpack-out`, packc calls `greentic-pack` to write the
 canonical `.gtpack` archive. Use
-`cargo run -p greentic-pack --bin gtpack-inspect -- --policy devok --json dist/demo.gtpack`
+`cargo run -p packc --bin greentic-pack -- --json doctor dist/demo.gtpack`
 to inspect the archive, confirm the SBOM entries have media types, and ensure
 the flows/templates match what was written into `dist/pack.wasm`.
 

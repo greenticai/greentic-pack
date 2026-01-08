@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "name": "weather_bot::collect_location",
+      "ref": "repo://io.3bridges.components.qa@1.0.0",
+      "digest": "sha256:deadbeef"
+    },
+    {
+      "name": "weather_bot::forecast_weather",
+      "ref": "repo://io.3bridges.components.mcp@1.0.0",
+      "digest": "sha256:deadbeef"
+    },
+    {
+      "name": "weather_bot::weather_text",
+      "ref": "../components/templating.handlebars.wasm",
+      "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476"
+    }
+  ]
+}

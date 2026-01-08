@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use greentic_types::decode_pack_manifest;
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 const COMPONENT_ID: &str = "ai.greentic.fixture";
@@ -41,6 +43,25 @@ fn component_exec_operation_is_preserved_in_manifest() {
     .expect("copy flow");
     let wasm_path = pack_root.join("components/fixture.wasm");
     write_stub_wasm(&wasm_path);
+    let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
+    let sidecar = json!({
+        "schema_version": 1,
+        "flow": "flows/main.ygtc",
+        "nodes": {
+            "hello": {
+                "source": {
+                    "kind": "local",
+                    "path": "../components/fixture.wasm",
+                    "digest": digest
+                }
+            }
+        }
+    });
+    fs::write(
+        pack_root.join("flows/main.ygtc.resolve.json"),
+        serde_json::to_vec_pretty(&sidecar).unwrap(),
+    )
+    .expect("write sidecar");
 
     let manifest_path = pack_root.join("dist/manifest.cbor");
     let output = Command::new(assert_cmd::cargo::cargo_bin!("packc"))

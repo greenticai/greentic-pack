@@ -1,5 +1,6 @@
 use assert_cmd::prelude::*;
-use std::path::PathBuf;
+use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace_root() -> PathBuf {
@@ -8,8 +9,30 @@ fn workspace_root() -> PathBuf {
         .join("..")
 }
 
+fn write_weather_sidecar(pack_dir: &Path) {
+    let sidecar_path = pack_dir.join("flows/weather_bot.ygtc.resolve.json");
+    let parent = sidecar_path
+        .parent()
+        .expect("sidecar parent exists")
+        .to_path_buf();
+    std::fs::create_dir_all(&parent).expect("create flows dir");
+    // Use digest-pinned repo refs to satisfy resolver without network.
+    let doc = json!({
+        "schema_version": 1,
+        "flow": "flows/weather_bot.ygtc",
+        "nodes": {
+            "collect_location": { "source": { "kind": "repo", "ref": "io.3bridges.components.qa@1.0.0", "digest": "sha256:deadbeef" } },
+            "forecast_weather": { "source": { "kind": "repo", "ref": "io.3bridges.components.mcp@1.0.0", "digest": "sha256:deadbeef" } },
+            "weather_text": { "source": { "kind": "local", "path": "../components/templating.handlebars.wasm", "digest": "sha256:deadbeef" } },
+        }
+    });
+    std::fs::write(sidecar_path, serde_json::to_vec_pretty(&doc).unwrap()).expect("write sidecar");
+}
+
 #[test]
 fn build_weather_demo_dry_run() {
+    let pack_dir = workspace_root().join("examples/weather-demo");
+    write_weather_sidecar(&pack_dir);
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("packc"));
     cmd.current_dir(workspace_root());
     cmd.args([

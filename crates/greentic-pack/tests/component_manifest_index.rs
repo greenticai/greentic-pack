@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use greentic_pack::reader::{SigningPolicy, open_pack};
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 const COMPONENT_ID: &str = "demo.component";
@@ -26,7 +27,8 @@ fn write_stub_wasm(path: &Path) {
 
 fn write_pack_files(pack_dir: &Path) {
     fs::create_dir_all(pack_dir.join("flows")).expect("flows dir");
-    write_stub_wasm(&pack_dir.join("components/demo.wasm"));
+    let wasm_path = pack_dir.join("components/demo.wasm");
+    write_stub_wasm(&wasm_path);
 
     let pack_yaml = format!(
         r#"pack_id: dev.local.manifest-demo
@@ -59,6 +61,9 @@ flows:
     );
     fs::write(pack_dir.join("pack.yaml"), pack_yaml).expect("pack.yaml");
 
+    let wasm_bytes = fs::read(&wasm_path).expect("read stub wasm");
+    let digest = format!("sha256:{:x}", Sha256::digest(&wasm_bytes));
+
     let flow = format!(
         r#"id: main
 type: messaging
@@ -75,6 +80,23 @@ nodes:
 "#
     );
     fs::write(pack_dir.join("flows/main.ygtc"), flow).expect("flow file");
+
+    let sidecar = format!(
+        r#"{{
+  "schema_version": 1,
+  "flow": "flows/main.ygtc",
+  "nodes": {{
+    "call": {{
+      "source": {{
+        "kind": "local",
+        "path": "../components/demo.wasm",
+        "digest": "{digest}"
+      }}
+    }}
+  }}
+}}"#
+    );
+    fs::write(pack_dir.join("flows/main.ygtc.resolve.json"), sidecar).expect("write sidecar");
 }
 
 fn build_pack_with_packc() -> (TempDir, PathBuf, greentic_pack::reader::PackLoad) {
@@ -89,6 +111,8 @@ fn build_pack_with_packc() -> (TempDir, PathBuf, greentic_pack::reader::PackLoad
         .args([
             "run",
             "-p",
+            "packc",
+            "--bin",
             "packc",
             "--quiet",
             "--",

@@ -19,35 +19,32 @@ pub struct UpdateArgs {
     /// Root directory of the pack (must contain pack.yaml)
     #[arg(long = "in", value_name = "DIR")]
     pub input: PathBuf,
+
+    /// Enforce that all flow nodes have resolve mappings; otherwise error.
+    #[arg(long = "strict", default_value_t = false)]
+    pub strict: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct FlowUpdateStats {
+pub struct FlowUpdateStats {
     added: usize,
     removed: usize,
     total: usize,
 }
 
+#[derive(Debug)]
+pub struct UpdateResult {
+    pub pack_dir: PathBuf,
+    pub config: PackConfig,
+    pub component_stats: crate::cli::components::ComponentUpdateStats,
+    pub flow_stats: FlowUpdateStats,
+}
+
 pub fn handle(args: UpdateArgs, json: bool) -> Result<()> {
-    let pack_dir = normalize(args.input);
-    let pack_yaml = normalize_under_root(&pack_dir, Path::new("pack.yaml"))?;
-    let components_dir = normalize_under_root(&pack_dir, Path::new("components"))?;
-    let flows_dir = normalize_under_root(&pack_dir, Path::new("flows"))?;
-
-    fs::create_dir_all(&components_dir)?;
-    fs::create_dir_all(&flows_dir)?;
-
-    let mut config: PackConfig = serde_yaml_bw::from_str(
-        &fs::read_to_string(&pack_yaml)
-            .with_context(|| format!("failed to read {}", pack_yaml.display()))?,
-    )
-    .with_context(|| format!("{} is not a valid pack.yaml", pack_yaml.display()))?;
-
-    let component_stats = sync_components(&mut config, &components_dir)?;
-    let flow_stats = sync_flows(&mut config, &flows_dir)?;
-
-    let serialized = serde_yaml_bw::to_string(&config)?;
-    fs::write(&pack_yaml, serialized)?;
+    let result = update_pack(&args.input, args.strict)?;
+    let pack_dir = result.pack_dir;
+    let component_stats = result.component_stats;
+    let flow_stats = result.flow_stats;
 
     if json {
         println!(
@@ -90,8 +87,41 @@ pub fn handle(args: UpdateArgs, json: bool) -> Result<()> {
 
     Ok(())
 }
+pub fn update_pack(input: &Path, strict: bool) -> Result<UpdateResult> {
+    let pack_dir = normalize(input.to_path_buf());
+    let pack_yaml = normalize_under_root(&pack_dir, Path::new("pack.yaml"))?;
+    let components_dir = normalize_under_root(&pack_dir, Path::new("components"))?;
+    let flows_dir = normalize_under_root(&pack_dir, Path::new("flows"))?;
 
-fn sync_flows(config: &mut PackConfig, flows_dir: &Path) -> Result<FlowUpdateStats> {
+    fs::create_dir_all(&components_dir)?;
+    fs::create_dir_all(&flows_dir)?;
+
+    let mut config: PackConfig = serde_yaml_bw::from_str(
+        &fs::read_to_string(&pack_yaml)
+            .with_context(|| format!("failed to read {}", pack_yaml.display()))?,
+    )
+    .with_context(|| format!("{} is not a valid pack.yaml", pack_yaml.display()))?;
+
+    let component_stats = sync_components(&mut config, &components_dir)?;
+    let flow_stats = sync_flows(&mut config, &flows_dir, &pack_dir, strict)?;
+
+    let serialized = serde_yaml_bw::to_string(&config)?;
+    fs::write(&pack_yaml, serialized)?;
+
+    Ok(UpdateResult {
+        pack_dir,
+        config,
+        component_stats,
+        flow_stats,
+    })
+}
+
+fn sync_flows(
+    config: &mut PackConfig,
+    flows_dir: &Path,
+    pack_dir: &Path,
+    strict: bool,
+) -> Result<FlowUpdateStats> {
     let discovered = discover_flows(flows_dir)?;
     let initial_flows = config.flows.len();
     let mut preserved = 0usize;
@@ -131,6 +161,8 @@ fn sync_flows(config: &mut PackConfig, flows_dir: &Path) -> Result<FlowUpdateSta
         if cfg.entrypoints.is_empty() {
             cfg.entrypoints = vec!["default".to_string()];
         }
+
+        crate::flow_resolve::ensure_sidecar_exists(pack_dir, &cfg, &flow, strict)?;
 
         updated.push(cfg);
     }

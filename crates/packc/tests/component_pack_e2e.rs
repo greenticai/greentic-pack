@@ -140,19 +140,27 @@ fn end_to_end_component_pack_workflow() {
     assert_eq!(cfg.components[0].id, "demo-component");
 
     // Lint and build the pack
-    Command::new(assert_cmd::cargo::cargo_bin!("packc"))
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
-        .args(["lint", "--in", pack_dir.to_str().unwrap(), "--log", "warn"])
+        .args([
+            "lint",
+            "--in",
+            pack_dir.to_str().unwrap(),
+            "--allow-oci-tags",
+            "--log",
+            "warn",
+        ])
         .assert()
         .success();
 
-    Command::new(assert_cmd::cargo::cargo_bin!("packc"))
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
         .args([
             "build",
             "--in",
             pack_dir.to_str().unwrap(),
             "--dry-run",
+            "--allow-oci-tags",
             "--log",
             "warn",
         ])
