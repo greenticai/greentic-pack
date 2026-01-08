@@ -7,8 +7,8 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  build-test:
-    name: CI (lint/test/build)
+  fmt:
+    name: CI (fmt)
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -16,6 +16,37 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: CI (clippy)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-clippy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    name: CI (build/test)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/ci-test
+      TMPDIR: ${{ github.workspace }}/.tmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Prepare temp dir
+        run: mkdir -p "$TMPDIR"
       - name: Install wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
       - name: Install greentic tooling (for E2E tests)
@@ -27,17 +58,15 @@ jobs:
           cargo binstall greentic-component -y --force
           # wasm-tools is required for mcp composition tests
           cargo binstall wasm-tools -y --force
-      - name: Lint & Test
+      - name: Build & Test
         run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D warnings
           cargo build --workspace --all-features
           cargo test --workspace --all-features -- --nocapture
 
   publish:
     name: Publish crates
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: build-test
+    needs: [fmt, clippy, test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
