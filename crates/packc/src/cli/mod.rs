@@ -107,7 +107,7 @@ pub struct BuildArgs {
     #[arg(long, value_name = "FILE")]
     pub sbom: Option<PathBuf>,
 
-    /// Output path for the generated & canonical .gtpack archive
+    /// Output path for the generated & canonical .gtpack archive (default: dist/<pack_dir>.gtpack)
     #[arg(long = "gtpack-out", value_name = "FILE")]
     pub gtpack_out: Option<PathBuf>,
 
@@ -182,7 +182,7 @@ pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
         Command::Config(args) => self::config::handle(args, cli.json, &runtime)?,
         Command::Plan(args) => self::plan::handle(&args)?,
         Command::Providers(cmd) => self::providers::run(cmd)?,
-        Command::Resolve(args) => self::resolve::handle(args, &runtime).await?,
+        Command::Resolve(args) => self::resolve::handle(args, &runtime, true).await?,
     }
 
     Ok(())

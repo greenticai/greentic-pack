@@ -15,6 +15,7 @@ use greentic_types::pack::extensions::component_manifests::{
 };
 use greentic_types::pack_manifest::{ExtensionInline, PackManifest as GpackManifest};
 use serde::Deserialize;
+use serde_cbor;
 use serde_json;
 use sha2::{Digest, Sha256};
 use x509_parser::pem::parse_x509_pem;
@@ -376,18 +377,13 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
     match decode_manifest(&manifest_bytes).context("manifest.cbor is invalid")? {
         ManifestModel::Pack(manifest) => {
             let manifest = *manifest;
-            let sbom_bytes = files
-                .get("sbom.json")
-                .cloned()
-                .ok_or_else(|| anyhow!("sbom.json missing from archive"))?;
-            let sbom_doc: SbomDocument =
-                serde_json::from_slice(&sbom_bytes).context("sbom.json is not valid JSON")?;
+            let (sbom_doc, sbom_bytes, sbom_name) = read_sbom_required(&files)?;
             if sbom_doc.format != SBOM_FORMAT {
                 bail!("unexpected SBOM format: {}", sbom_doc.format);
             }
 
             let mut warnings = Vec::new();
-            verify_sbom(&files, &sbom_doc.files)?;
+            verify_sbom(&files, &sbom_doc.files, sbom_name)?;
             let signature_ok = match (
                 files.get(SIGNATURE_PATH),
                 files.get(SIGNATURE_CHAIN_PATH),
@@ -443,36 +439,15 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
         }
         ManifestModel::Gpack(manifest) => {
             let manifest = *manifest;
-            let mut warnings = vec![format!(
-                "detected manifest schema {}; applying compatibility reader",
-                manifest.schema_version
-            )];
+            let mut warnings = Vec::new();
+            if manifest.schema_version != "pack-v1" {
+                warnings.push(format!(
+                    "detected manifest schema {}; applying compatibility reader",
+                    manifest.schema_version
+                ));
+            }
 
-            let (sbom, sbom_ok, sbom_bytes) = if let Some(sbom_bytes) = files.get("sbom.json") {
-                match serde_json::from_slice::<SbomDocument>(sbom_bytes) {
-                    Ok(sbom_doc) => {
-                        let mut ok = sbom_doc.format == SBOM_FORMAT;
-                        if !ok {
-                            warnings.push(format!("unexpected SBOM format: {}", sbom_doc.format));
-                        }
-                        match verify_sbom(&files, &sbom_doc.files) {
-                            Ok(()) => {}
-                            Err(err) => {
-                                warnings.push(err.to_string());
-                                ok = false;
-                            }
-                        }
-                        (sbom_doc.files, ok, Some(sbom_bytes.clone()))
-                    }
-                    Err(err) => {
-                        warnings.push(format!("sbom.json is not valid JSON: {err}"));
-                        (Vec::new(), false, Some(sbom_bytes.clone()))
-                    }
-                }
-            } else {
-                warnings.push("sbom.json missing; synthesized inventory for validation".into());
-                (synthesize_sbom(&files), false, None)
-            };
+            let (sbom, sbom_ok, sbom_bytes, sbom_name) = read_sbom_optional(&files, &mut warnings);
 
             let signature_ok = match (
                 files.get(SIGNATURE_PATH),
@@ -504,9 +479,10 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
                     false
                 }
                 (Some(_), Some(_), None, _) => {
-                    warnings.push(
-                        "signature present but sbom.json missing; skipping verification".into(),
-                    );
+                    warnings.push(format!(
+                        "signature present but {} missing; skipping verification",
+                        sbom_name
+                    ));
                     false
                 }
                 (None, None, _, _) => {
@@ -540,7 +516,11 @@ struct SbomDocument {
     files: Vec<SbomEntry>,
 }
 
-fn verify_sbom(files: &HashMap<String, Vec<u8>>, entries: &[SbomEntry]) -> Result<()> {
+fn verify_sbom(
+    files: &HashMap<String, Vec<u8>>,
+    entries: &[SbomEntry],
+    sbom_name: &str,
+) -> Result<()> {
     let mut listed = HashSet::new();
     for entry in entries {
         let data = files
@@ -559,15 +539,87 @@ fn verify_sbom(files: &HashMap<String, Vec<u8>>, entries: &[SbomEntry]) -> Resul
     }
 
     for path in files.keys() {
-        if path == SIGNATURE_PATH || path == SIGNATURE_CHAIN_PATH || path == "sbom.json" {
+        if path == SIGNATURE_PATH
+            || path == SIGNATURE_CHAIN_PATH
+            || path == "sbom.json"
+            || path == "sbom.cbor"
+        {
             continue;
         }
         if !listed.contains(path) {
-            bail!("file `{}` missing from sbom.json", path);
+            bail!("file `{}` missing from {}", path, sbom_name);
         }
     }
 
     Ok(())
+}
+
+fn read_sbom_required(
+    files: &HashMap<String, Vec<u8>>,
+) -> Result<(SbomDocument, Vec<u8>, &'static str)> {
+    if let Some(sbom_bytes) = files.get("sbom.cbor") {
+        let sbom_doc: SbomDocument =
+            serde_cbor::from_slice(sbom_bytes).context("sbom.cbor is not valid CBOR")?;
+        return Ok((sbom_doc, sbom_bytes.clone(), "sbom.cbor"));
+    }
+    if let Some(sbom_bytes) = files.get("sbom.json") {
+        let sbom_doc: SbomDocument =
+            serde_json::from_slice(sbom_bytes).context("sbom.json is not valid JSON")?;
+        return Ok((sbom_doc, sbom_bytes.clone(), "sbom.json"));
+    }
+    Err(anyhow!("sbom.cbor missing from archive"))
+}
+
+fn read_sbom_optional(
+    files: &HashMap<String, Vec<u8>>,
+    warnings: &mut Vec<String>,
+) -> (Vec<SbomEntry>, bool, Option<Vec<u8>>, &'static str) {
+    if let Some(sbom_bytes) = files.get("sbom.cbor") {
+        match serde_cbor::from_slice::<SbomDocument>(sbom_bytes) {
+            Ok(sbom_doc) => {
+                let mut ok = sbom_doc.format == SBOM_FORMAT;
+                if !ok {
+                    warnings.push(format!("unexpected SBOM format: {}", sbom_doc.format));
+                }
+                match verify_sbom(files, &sbom_doc.files, "sbom.cbor") {
+                    Ok(()) => {}
+                    Err(err) => {
+                        warnings.push(err.to_string());
+                        ok = false;
+                    }
+                }
+                return (sbom_doc.files, ok, Some(sbom_bytes.clone()), "sbom.cbor");
+            }
+            Err(err) => {
+                warnings.push(format!("sbom.cbor is not valid CBOR: {err}"));
+                return (Vec::new(), false, Some(sbom_bytes.clone()), "sbom.cbor");
+            }
+        }
+    }
+    if let Some(sbom_bytes) = files.get("sbom.json") {
+        match serde_json::from_slice::<SbomDocument>(sbom_bytes) {
+            Ok(sbom_doc) => {
+                let mut ok = sbom_doc.format == SBOM_FORMAT;
+                if !ok {
+                    warnings.push(format!("unexpected SBOM format: {}", sbom_doc.format));
+                }
+                match verify_sbom(files, &sbom_doc.files, "sbom.json") {
+                    Ok(()) => {}
+                    Err(err) => {
+                        warnings.push(err.to_string());
+                        ok = false;
+                    }
+                }
+                return (sbom_doc.files, ok, Some(sbom_bytes.clone()), "sbom.json");
+            }
+            Err(err) => {
+                warnings.push(format!("sbom.json is not valid JSON: {err}"));
+                return (Vec::new(), false, Some(sbom_bytes.clone()), "sbom.json");
+            }
+        }
+    }
+    warnings.push("sbom.cbor missing; synthesized inventory for validation".into());
+    (synthesize_sbom(files), false, None, "sbom.cbor")
 }
 
 fn verify_signature(

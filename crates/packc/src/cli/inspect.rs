@@ -8,9 +8,12 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use greentic_pack::{PackLoad, SigningPolicy, open_pack};
+use greentic_types::component_source::ComponentSourceRef;
 use greentic_types::pack::extensions::component_sources::{
     ArtifactLocationV1, ComponentSourcesV1, EXT_COMPONENT_SOURCES_V1,
 };
+use greentic_types::pack_manifest::PackManifest;
+use greentic_types::provider::ProviderDecl;
 use tempfile::TempDir;
 
 use crate::build;
@@ -157,7 +160,27 @@ fn print_human(load: &PackLoad) {
         manifest.meta.pack_id, manifest.meta.version
     );
     println!("Name: {}", manifest.meta.name);
+    println!("Flows: {}", manifest.flows.len());
+    if manifest.flows.is_empty() {
+        println!("Flows list: none");
+    } else {
+        println!("Flows list:");
+        for flow in &manifest.flows {
+            println!(
+                "  - {} (entry: {}, kind: {})",
+                flow.id, flow.entry, flow.kind
+            );
+        }
+    }
     println!("Components: {}", manifest.components.len());
+    if manifest.components.is_empty() {
+        println!("Components list: none");
+    } else {
+        println!("Components list:");
+        for component in &manifest.components {
+            println!("  - {} ({})", component.name, component.version);
+        }
+    }
     if let Some(gmanifest) = load.gpack_manifest.as_ref()
         && let Some(value) = gmanifest
             .extensions
@@ -172,42 +195,63 @@ fn print_human(load: &PackLoad) {
     {
         let mut inline = 0usize;
         let mut remote = 0usize;
+        let mut oci = 0usize;
+        let mut repo = 0usize;
+        let mut store = 0usize;
         for entry in &cs.components {
             match entry.artifact {
                 ArtifactLocationV1::Inline { .. } => inline += 1,
                 ArtifactLocationV1::Remote => remote += 1,
             }
+            match entry.source {
+                ComponentSourceRef::Oci(_) => oci += 1,
+                ComponentSourceRef::Repo(_) => repo += 1,
+                ComponentSourceRef::Store(_) => store += 1,
+            }
         }
         println!(
-            "Component sources: {} inline, {} remote (digests required)",
-            inline, remote
+            "Component sources: {} total (origins: oci {}, repo {}, store {}; artifacts: inline {}, remote {})",
+            cs.components.len(),
+            oci,
+            repo,
+            store,
+            inline,
+            remote
         );
-    }
-
-    if let Some(msg) = manifest
-        .meta
-        .messaging
-        .as_ref()
-        .and_then(|m| m.adapters.as_ref())
-    {
-        if msg.is_empty() {
-            println!("Messaging adapters: none");
+        if cs.components.is_empty() {
+            println!("Component source entries: none");
         } else {
-            println!("Messaging adapters:");
-            for adapter in msg {
-                let flow = adapter
-                    .default_flow
-                    .as_deref()
-                    .or(adapter.custom_flow.as_deref())
-                    .unwrap_or("-");
+            println!("Component source entries:");
+            for entry in &cs.components {
                 println!(
-                    "  - {} ({:?}) component={} flow={}",
-                    adapter.name, adapter.kind, adapter.component, flow
+                    "  - {} source={} artifact={}",
+                    entry.name,
+                    format_component_source(&entry.source),
+                    format_component_artifact(&entry.artifact)
                 );
             }
         }
     } else {
-        println!("Messaging adapters: none");
+        println!("Component sources: none");
+    }
+
+    if let Some(gmanifest) = load.gpack_manifest.as_ref() {
+        let providers = providers_from_manifest(gmanifest);
+        if providers.is_empty() {
+            println!("Providers: none");
+        } else {
+            println!("Providers:");
+            for provider in providers {
+                println!(
+                    "  - {} ({}) {}",
+                    provider.provider_type,
+                    provider_kind(&provider),
+                    summarize_provider(&provider)
+                );
+            }
+        }
+    } else {
+        println!("Providers: none");
     }
 
     if !report.warnings.is_empty() {
@@ -215,5 +259,58 @@ fn print_human(load: &PackLoad) {
         for warning in &report.warnings {
             println!("  - {}", warning);
         }
+    }
+}
+
+fn providers_from_manifest(manifest: &PackManifest) -> Vec<ProviderDecl> {
+    let mut providers = manifest
+        .provider_extension_inline()
+        .map(|inline| inline.providers.clone())
+        .unwrap_or_default();
+    providers.sort_by(|a, b| a.provider_type.cmp(&b.provider_type));
+    providers
+}
+
+fn provider_kind(provider: &ProviderDecl) -> String {
+    provider
+        .runtime
+        .world
+        .split('@')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn summarize_provider(provider: &ProviderDecl) -> String {
+    let caps = provider.capabilities.len();
+    let ops = provider.ops.len();
+    let mut parts = vec![format!("caps:{caps}"), format!("ops:{ops}")];
+    parts.push(format!("config:{}", provider.config_schema_ref));
+    if let Some(docs) = provider.docs_ref.as_deref() {
+        parts.push(format!("docs:{docs}"));
+    }
+    parts.join(" ")
+}
+
+fn format_component_source(source: &ComponentSourceRef) -> String {
+    match source {
+        ComponentSourceRef::Oci(value) => format_source_ref("oci", value),
+        ComponentSourceRef::Repo(value) => format_source_ref("repo", value),
+        ComponentSourceRef::Store(value) => format_source_ref("store", value),
+    }
+}
+
+fn format_source_ref(scheme: &str, value: &str) -> String {
+    if value.contains("://") {
+        value.to_string()
+    } else {
+        format!("{scheme}://{value}")
+    }
+}
+
+fn format_component_artifact(artifact: &ArtifactLocationV1) -> String {
+    match artifact {
+        ArtifactLocationV1::Inline { wasm_path, .. } => format!("inline ({})", wasm_path),
+        ArtifactLocationV1::Remote => "remote".to_string(),
     }
 }

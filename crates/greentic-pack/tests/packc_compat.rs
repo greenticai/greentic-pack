@@ -124,7 +124,7 @@ nodes:
 
     assert_eq!(load.manifest.meta.pack_id, "demo.test");
     assert!(!load.report.signature_ok);
-    assert!(!load.report.sbom_ok);
-    assert!(load.report.warnings.iter().any(|msg| msg.contains("sbom")));
+    assert!(load.report.sbom_ok);
+    assert!(load.report.warnings.iter().all(|msg| !msg.contains("sbom")));
     assert!(!load.sbom.is_empty());
 }

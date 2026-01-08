@@ -20,6 +20,7 @@ openssl = []
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }
+blake3 = { workspace = true }
 clap = { workspace = true }
 ed25519-dalek = { workspace = true }
 greentic-flow = { workspace = true }
@@ -65,6 +66,5 @@ path = "bin/greentic_pack.rs"
 assert_cmd = "2"
 indoc = "2"
 tempfile = "3"
-blake3 = { workspace = true }
 wasmtime = "40"
 wasmtime-wasi = "40"

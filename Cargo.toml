@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.89"
-version = "0.4.41"
+version = "0.4.42"
 license = "MIT"
 
 [workspace.dependencies]
@@ -55,6 +55,6 @@ rand_core_06 = { package = "rand_core", version = "0.6", features = ["std"] }
 rustls-pki-types = "1"
 x509-parser = "0.18"
 regex = "1"
-wit-component = "0.243.0"
+wit-component = "0.244"
 greentic-distributor-client = { version = "0.4.12", default-features = false, features = ["reqwest", "dist-client"] }
 schemars = "1"

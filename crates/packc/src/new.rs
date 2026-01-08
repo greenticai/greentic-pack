@@ -95,8 +95,7 @@ nodes:
   start:
     templating.handlebars:
       text: "Hello from greentic-pack starter!"
-    routing:
-      - out: true
+    routing: out
 "#;
     fs::write(&flow_path, FLOW).with_context(|| format!("failed to write {}", flow_path.display()))
 }

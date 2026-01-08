@@ -26,7 +26,7 @@ pub struct ResolveArgs {
     pub lock: Option<PathBuf>,
 }
 
-pub async fn handle(args: ResolveArgs, runtime: &RuntimeContext) -> Result<()> {
+pub async fn handle(args: ResolveArgs, runtime: &RuntimeContext, emit_path: bool) -> Result<()> {
     let pack_dir = args
         .input
         .canonicalize()
@@ -62,7 +62,9 @@ pub async fn handle(args: ResolveArgs, runtime: &RuntimeContext) -> Result<()> {
 
     let lock = PackLockV1::new(entries);
     write_pack_lock(&lock_path, &lock)?;
-    eprintln!("wrote {}", lock_path.display());
+    if emit_path {
+        eprintln!("wrote {}", lock_path.display());
+    }
 
     Ok(())
 }

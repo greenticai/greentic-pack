@@ -7,6 +7,7 @@ use crate::flow_resolve::enforce_sidecar_mappings;
 use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow};
 use greentic_flow::compile_ygtc_str;
+use greentic_pack::builder::SbomEntry;
 use greentic_pack::pack_lock::read_pack_lock;
 use greentic_types::component_source::ComponentSourceRef;
 use greentic_types::pack::extensions::component_manifests::{
@@ -24,6 +25,7 @@ use greentic_types::{
     encode_pack_manifest,
 };
 use semver::Version;
+use serde::Serialize;
 use serde_cbor;
 use serde_json::Value as JsonValue;
 use serde_yaml_bw::Value as YamlValue;
@@ -36,6 +38,14 @@ use std::str::FromStr;
 use tracing::info;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
+
+const SBOM_FORMAT: &str = "greentic-sbom-v1";
+
+#[derive(Serialize)]
+struct SbomDocument {
+    format: String,
+    files: Vec<SbomEntry>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum BundleMode {
@@ -77,9 +87,18 @@ impl BuildOptions {
         let sbom_out = args
             .sbom
             .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) });
-        let gtpack_out = args
-            .gtpack_out
-            .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) });
+        let default_gtpack_name = pack_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("pack");
+        let default_gtpack_out = pack_dir
+            .join("dist")
+            .join(format!("{default_gtpack_name}.gtpack"));
+        let gtpack_out = Some(
+            args.gtpack_out
+                .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) })
+                .unwrap_or(default_gtpack_out),
+        );
         let lock_path = args
             .lock
             .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) })
@@ -125,6 +144,7 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
             lock: Some(opts.lock_path.clone()),
         },
         &opts.runtime,
+        false,
     )
     .await?;
 
@@ -194,6 +214,7 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
         }
         package_gtpack(gtpack_out, &manifest_bytes, &build, opts.bundle)?;
         info!(gtpack_out = %gtpack_out.display(), "gtpack archive ready");
+        eprintln!("wrote {}", gtpack_out.display());
     }
 
     Ok(())
@@ -1025,6 +1046,13 @@ fn package_gtpack(
         .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o644);
 
+    let mut sbom_entries = Vec::new();
+    record_sbom_entry(
+        &mut sbom_entries,
+        "manifest.cbor",
+        manifest_bytes,
+        "application/cbor",
+    );
     write_zip_entry(&mut writer, "manifest.cbor", manifest_bytes, options)?;
 
     if bundle != BundleMode::None {
@@ -1034,8 +1062,20 @@ fn package_gtpack(
             let logical_wasm = format!("components/{}.wasm", comp.id);
             let wasm_bytes = fs::read(&comp.source)
                 .with_context(|| format!("failed to read component {}", comp.source.display()))?;
+            record_sbom_entry(
+                &mut sbom_entries,
+                &logical_wasm,
+                &wasm_bytes,
+                "application/wasm",
+            );
             write_zip_entry(&mut writer, &logical_wasm, &wasm_bytes, options)?;
 
+            record_sbom_entry(
+                &mut sbom_entries,
+                &comp.manifest_path,
+                &comp.manifest_bytes,
+                "application/cbor",
+            );
             write_zip_entry(
                 &mut writer,
                 &comp.manifest_path,
@@ -1054,13 +1094,36 @@ fn package_gtpack(
     for (logical, source) in asset_entries {
         let bytes = fs::read(&source)
             .with_context(|| format!("failed to read asset {}", source.display()))?;
+        record_sbom_entry(
+            &mut sbom_entries,
+            &logical,
+            &bytes,
+            "application/octet-stream",
+        );
         write_zip_entry(&mut writer, &logical, &bytes, options)?;
     }
+
+    sbom_entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let sbom_doc = SbomDocument {
+        format: SBOM_FORMAT.to_string(),
+        files: sbom_entries,
+    };
+    let sbom_bytes = serde_cbor::to_vec(&sbom_doc).context("failed to encode sbom.cbor")?;
+    write_zip_entry(&mut writer, "sbom.cbor", &sbom_bytes, options)?;
 
     writer
         .finish()
         .context("failed to finalise gtpack archive")?;
     Ok(())
+}
+
+fn record_sbom_entry(entries: &mut Vec<SbomEntry>, path: &str, bytes: &[u8], media_type: &str) {
+    entries.push(SbomEntry {
+        path: path.to_string(),
+        size: bytes.len() as u64,
+        hash_blake3: blake3::hash(bytes).to_hex().to_string(),
+        media_type: media_type.to_string(),
+    });
 }
 
 fn write_zip_entry(
