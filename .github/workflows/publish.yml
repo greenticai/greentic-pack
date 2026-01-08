@@ -40,13 +40,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TARGET_DIR: target/ci-test
-      TMPDIR: ${{ runner.temp }}
+      TMPDIR: /tmp/greentic-pack-tmp
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - name: Install wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
+      - name: Prepare temp dir
+        run: mkdir -p "$TMPDIR"
       - name: Install greentic tooling (for E2E tests)
         run: |
           set -euo pipefail
