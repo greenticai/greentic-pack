@@ -32,8 +32,9 @@ compatibility shim; once installed they're available on your `PATH`.
 
 For declaring providers inside `pack.yaml`, see
 `docs/events-provider-packs.md`. The provider extension is optional and
-validated by `packc lint`; scaffold a starter pack with `greentic-dev pack
-new-provider` and inspect it with `greentic-pack providers list --pack <path>`.
+validated by `greentic-pack lint`; scaffold a starter pack with
+`greentic-pack new` and inspect it with
+`greentic-pack providers list --pack <path>`.
 
 For repo-oriented packs (source/scanner/signing/attestation/policy/oci),
 see `docs/repo-pack-types.md` for the schema, capabilities, and bindings

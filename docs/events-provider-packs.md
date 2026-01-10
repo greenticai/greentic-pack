@@ -1,6 +1,6 @@
 # Provider Extension Packs
 
-Packs can describe providers so runtimes can discover brokers/sources/sinks/bridges without hard-coding transports. The provider extension lives under `extensions.greentic.provider-extension.v1` in `pack.yaml` and is optional/compatible with existing packs. Scaffold a starter with `greentic-dev pack new-provider`.
+Packs can describe providers so runtimes can discover brokers/sources/sinks/bridges without hard-coding transports. The provider extension lives under `extensions.greentic.provider-extension.v1` in `pack.yaml` and is optional/compatible with existing packs.
 
 ## Schema
 
