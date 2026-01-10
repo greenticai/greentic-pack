@@ -96,6 +96,25 @@ fn inspect_json_reports_messaging_section() {
     drop(temp_dir);
 }
 
+#[test]
+fn inspect_accepts_positional_path() {
+    let (temp_dir, pack_path, _adapter_name) = build_pack_with_messaging();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .current_dir(workspace_root())
+        .args(["inspect", pack_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .current_dir(workspace_root())
+        .args(["doctor", pack_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    drop(temp_dir);
+}
+
 fn build_pack_with_messaging() -> (TempDir, PathBuf, String) {
     let adapter_name = "demo-adapter".to_string();
     let temp = TempDir::new().expect("temp dir");
