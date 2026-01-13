@@ -3,7 +3,7 @@
   "components": [
     {
       "name": "main::start",
-      "ref": "../components/templating.handlebars.wasm",
+      "ref": "file:///Users/maarten/Documents/GitHub/agentic/greentic-pack/examples/reco-demo/flows/../components/templating.handlebars.wasm",
       "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476"
     }
   ]

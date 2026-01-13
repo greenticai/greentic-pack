@@ -6,7 +6,9 @@ use crate::extensions::validate_components_extension;
 use crate::flow_resolve::enforce_sidecar_mappings;
 use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow};
-use greentic_flow::compile_ygtc_str;
+use greentic_flow::add_step::normalize::normalize_node_map;
+use greentic_flow::compile_ygtc_file;
+use greentic_flow::loader::load_ygtc_from_path;
 use greentic_pack::builder::SbomEntry;
 use greentic_pack::pack_lock::read_pack_lock;
 use greentic_types::component_source::ComponentSourceRef;
@@ -27,7 +29,6 @@ use greentic_types::{
 use semver::Version;
 use serde::Serialize;
 use serde_cbor;
-use serde_json::Value as JsonValue;
 use serde_yaml_bw::Value as YamlValue;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -557,22 +558,11 @@ fn build_flows(
 
     for cfg in configs {
         info!(id = %cfg.id, path = %cfg.file.display(), "compiling flow");
-        let yaml_src = fs::read_to_string(&cfg.file)
-            .with_context(|| format!("failed to read flow {}", cfg.file.display()))?;
-
-        let normalized_yaml =
-            normalize_routing_shorthand(&yaml_src, component_ids).with_context(|| {
-                format!(
-                    "failed to normalize flow authoring in {}",
-                    cfg.file.display()
-                )
-            })?;
-
-        let mut flow: Flow = compile_ygtc_str(&normalized_yaml)
+        let mut flow: Flow = compile_ygtc_file(&cfg.file)
             .with_context(|| format!("failed to compile {}", cfg.file.display()))?;
-        normalize_component_exec_nodes(&mut flow).with_context(|| {
+        populate_component_exec_operations(&mut flow, &cfg.file).with_context(|| {
             format!(
-                "failed to normalize component.exec nodes in {}",
+                "failed to resolve component.exec operations in {}",
                 cfg.file.display()
             )
         })?;
@@ -603,62 +593,6 @@ fn build_flows(
     }
 
     Ok(entries)
-}
-
-fn normalize_component_exec_nodes(flow: &mut Flow) -> Result<()> {
-    for (node_id, node) in flow.nodes.iter_mut() {
-        if node.component.id.as_str() != "component.exec" {
-            continue;
-        }
-
-        let payload = node
-            .input
-            .mapping
-            .as_object()
-            .cloned()
-            .ok_or_else(|| anyhow!("component.exec node {} must map to an object", node_id))?;
-
-        let component_id = payload
-            .get("component")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| {
-                anyhow!(
-                    "component.exec node {} missing string component field",
-                    node_id
-                )
-            })?;
-        node.component = greentic_types::flow::ComponentRef {
-            id: ComponentId::new(component_id).context("invalid component id")?,
-            pack_alias: node.component.pack_alias.clone().or_else(|| {
-                payload
-                    .get("pack_alias")
-                    .and_then(JsonValue::as_str)
-                    .map(String::from)
-            }),
-            operation: node.component.operation.clone().or_else(|| {
-                payload
-                    .get("operation")
-                    .and_then(JsonValue::as_str)
-                    .map(String::from)
-            }),
-        };
-
-        let mut payload = payload;
-        if let Some(op) = node.component.operation.as_deref() {
-            let needs_op = match payload.get("operation") {
-                Some(JsonValue::String(existing)) => existing.trim().is_empty(),
-                None => true,
-                _ => true,
-            };
-            if needs_op {
-                payload.insert("operation".to_string(), JsonValue::String(op.to_string()));
-            }
-        }
-
-        node.input.mapping = JsonValue::Object(payload);
-    }
-
-    Ok(())
 }
 
 fn infer_component_id_for_node(node_id: &str, components: &BTreeSet<String>) -> Result<String> {
@@ -711,103 +645,36 @@ fn resolve_missing_component_ids(flow: &mut Flow, components: &BTreeSet<String>)
     Ok(())
 }
 
-fn node_map_has_component_key(map: &serde_yaml_bw::Mapping, components: &BTreeSet<String>) -> bool {
-    map.keys().any(|key| {
-        key.as_str().is_some_and(|s| {
-            s == "component.exec" || components.contains(s) || s.contains('.') || s.contains(':')
-        })
-    })
-}
+fn populate_component_exec_operations(flow: &mut Flow, path: &Path) -> Result<()> {
+    let needs_op = flow.nodes.values().any(|node| {
+        node.component.id.as_str() == "component.exec" && node.component.operation.is_none()
+    });
+    if !needs_op {
+        return Ok(());
+    }
 
-fn normalize_routing_shorthand(yaml_src: &str, components: &BTreeSet<String>) -> Result<String> {
-    let mut doc: YamlValue = serde_yaml_bw::from_str(yaml_src)?;
-    let nodes = doc
-        .as_mapping_mut()
-        .and_then(|map| map.get_mut(YamlValue::from("nodes")))
-        .and_then(YamlValue::as_mapping_mut)
-        .ok_or_else(|| anyhow!("flow must contain nodes map"))?;
+    let flow_doc = load_ygtc_from_path(path)?;
+    let mut operations = BTreeMap::new();
 
-    for (name, node) in nodes.iter_mut() {
-        let node_id = name
-            .as_str()
-            .ok_or_else(|| anyhow!("node identifiers must be strings"))?;
-        if let Some(map) = node.as_mapping_mut() {
-            if !node_map_has_component_key(map, components) {
-                let component_id = infer_component_id_for_node(node_id, components)?;
-                let original = std::mem::take(map);
-                let mut component_body = serde_yaml_bw::Mapping::new();
-                let mut routing_value: Option<YamlValue> = None;
-                let mut operation_value: Option<YamlValue> = None;
-                let mut pack_alias_value: Option<YamlValue> = None;
-                let mut output_value: Option<YamlValue> = None;
-                let mut telemetry_value: Option<YamlValue> = None;
-                for (k, v) in original.into_iter() {
-                    match k.as_str() {
-                        Some("routing") => {
-                            routing_value = Some(v);
-                            continue;
-                        }
-                        Some("operation") => {
-                            operation_value = Some(v);
-                            continue;
-                        }
-                        Some("pack_alias") => {
-                            pack_alias_value = Some(v);
-                            continue;
-                        }
-                        Some("output") => {
-                            output_value = Some(v);
-                            continue;
-                        }
-                        Some("telemetry") => {
-                            telemetry_value = Some(v);
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    component_body.insert(k, v);
-                }
-                let mut rebuilt = serde_yaml_bw::Mapping::new();
-                rebuilt.insert(
-                    YamlValue::from(component_id),
-                    YamlValue::Mapping(component_body),
-                );
-                if let Some(operation) = operation_value {
-                    rebuilt.insert(YamlValue::from("operation"), operation);
-                }
-                if let Some(pack_alias) = pack_alias_value {
-                    rebuilt.insert(YamlValue::from("pack_alias"), pack_alias);
-                }
-                if let Some(output) = output_value {
-                    rebuilt.insert(YamlValue::from("output"), output);
-                }
-                if let Some(telemetry) = telemetry_value {
-                    rebuilt.insert(YamlValue::from("telemetry"), telemetry);
-                }
-                if let Some(routing) = routing_value {
-                    rebuilt.insert(YamlValue::from("routing"), routing);
-                }
-                *map = rebuilt;
-            }
-
-            if let Some(routing) = map.get("routing")
-                && let Some(s) = routing.as_str()
-            {
-                let entry = match s {
-                    "out" => serde_yaml_bw::to_value(vec![serde_json::json!({ "out": true })])?,
-                    "reply" => serde_yaml_bw::to_value(vec![serde_json::json!({ "reply": true })])?,
-                    other => anyhow::bail!(
-                        "routing shorthand must be \"out\" or \"reply\", found {}",
-                        other
-                    ),
-                };
-                map.insert(YamlValue::from("routing"), entry);
-            }
+    for (node_id, node_doc) in flow_doc.nodes {
+        let value = serde_json::to_value(&node_doc)
+            .with_context(|| format!("failed to normalize component.exec node {}", node_id))?;
+        let normalized = normalize_node_map(value)?;
+        if !normalized.operation.trim().is_empty() {
+            operations.insert(node_id, normalized.operation);
         }
     }
 
-    let normalized = serde_yaml_bw::to_string(&doc)?;
-    Ok(normalized)
+    for (node_id, node) in flow.nodes.iter_mut() {
+        if node.component.id.as_str() != "component.exec" || node.component.operation.is_some() {
+            continue;
+        }
+        if let Some(op) = operations.get(node_id.as_str()) {
+            node.component.operation = Some(op.clone());
+        }
+    }
+
+    Ok(())
 }
 
 fn build_dependencies(configs: &[crate::config::DependencyConfig]) -> Result<Vec<PackDependency>> {

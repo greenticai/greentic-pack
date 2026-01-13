@@ -50,7 +50,7 @@ pub async fn handle(args: ResolveArgs, runtime: &RuntimeContext, emit_path: bool
             continue;
         };
         collect_from_sidecar(
-            &pack_dir,
+            &sidecar.flow_path,
             &sidecar.flow_id,
             &doc,
             &dist,
@@ -87,7 +87,7 @@ fn new_dist_client(runtime: &RuntimeContext) -> DistClient {
 }
 
 async fn collect_from_sidecar(
-    pack_dir: &Path,
+    flow_path: &Path,
     flow_id: &str,
     doc: &FlowResolveV1,
     dist: &DistClient,
@@ -101,12 +101,12 @@ async fn collect_from_sidecar(
         let source_ref = &resolve.source;
         let (reference, digest) = match source_ref {
             ComponentSourceRefV1::Local { path, digest } => {
-                let abs = normalize_local(pack_dir, &doc.flow, path)?;
+                let abs = normalize_local(flow_path, path)?;
                 let digest = match digest {
                     Some(d) => d.clone(),
                     None => compute_sha256(&abs)?,
                 };
-                (path.clone(), digest)
+                (format!("file://{}", abs.to_string_lossy()), digest)
             }
             ComponentSourceRefV1::Oci { r#ref, digest }
             | ComponentSourceRefV1::Repo { r#ref, digest }
@@ -137,11 +137,10 @@ async fn collect_from_sidecar(
     Ok(())
 }
 
-fn normalize_local(pack_dir: &Path, flow_file: &str, rel: &str) -> Result<PathBuf> {
-    let flow_path = pack_dir.join(flow_file);
+fn normalize_local(flow_path: &Path, rel: &str) -> Result<PathBuf> {
     let parent = flow_path
         .parent()
-        .ok_or_else(|| anyhow!("flow path {} has no parent", flow_file))?;
+        .ok_or_else(|| anyhow!("flow path {} has no parent", flow_path.display()))?;
     Ok(parent.join(rel))
 }
 

@@ -198,6 +198,7 @@ fn print_human(load: &PackLoad) {
         let mut oci = 0usize;
         let mut repo = 0usize;
         let mut store = 0usize;
+        let mut file = 0usize;
         for entry in &cs.components {
             match entry.artifact {
                 ArtifactLocationV1::Inline { .. } => inline += 1,
@@ -207,14 +208,16 @@ fn print_human(load: &PackLoad) {
                 ComponentSourceRef::Oci(_) => oci += 1,
                 ComponentSourceRef::Repo(_) => repo += 1,
                 ComponentSourceRef::Store(_) => store += 1,
+                ComponentSourceRef::File(_) => file += 1,
             }
         }
         println!(
-            "Component sources: {} total (origins: oci {}, repo {}, store {}; artifacts: inline {}, remote {})",
+            "Component sources: {} total (origins: oci {}, repo {}, store {}, file {}; artifacts: inline {}, remote {})",
             cs.components.len(),
             oci,
             repo,
             store,
+            file,
             inline,
             remote
         );
@@ -297,6 +300,7 @@ fn format_component_source(source: &ComponentSourceRef) -> String {
         ComponentSourceRef::Oci(value) => format_source_ref("oci", value),
         ComponentSourceRef::Repo(value) => format_source_ref("repo", value),
         ComponentSourceRef::Store(value) => format_source_ref("store", value),
+        ComponentSourceRef::File(value) => format_source_ref("file", value),
     }
 }
 
