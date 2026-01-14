@@ -4,8 +4,9 @@ use crate::config::{
 };
 use crate::extensions::validate_components_extension;
 use crate::flow_resolve::enforce_sidecar_mappings;
-use crate::runtime::RuntimeContext;
+use crate::runtime::{NetworkPolicy, RuntimeContext};
 use anyhow::{Context, Result, anyhow};
+use greentic_distributor_client::{DistClient, DistOptions};
 use greentic_flow::add_step::normalize::normalize_node_map;
 use greentic_flow::compile_ygtc_file;
 use greentic_flow::loader::load_ygtc_from_path;
@@ -181,6 +182,9 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
     })?;
 
     let mut build = assemble_manifest(&config, &opts.pack_dir, &secret_requirements)?;
+    build.lock_components =
+        collect_lock_component_artifacts(&pack_lock, &opts.runtime, opts.bundle, opts.dry_run)
+            .await?;
     build.manifest.extensions =
         merge_component_sources_extension(build.manifest.extensions, &pack_lock, opts.bundle)?;
 
@@ -224,6 +228,7 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
 struct BuildProducts {
     manifest: PackManifest,
     components: Vec<ComponentBinary>,
+    lock_components: Vec<LockComponentBinary>,
     flow_files: Vec<FlowFile>,
     assets: Vec<AssetFile>,
 }
@@ -235,6 +240,12 @@ struct ComponentBinary {
     manifest_bytes: Vec<u8>,
     manifest_path: String,
     manifest_hash_sha256: String,
+}
+
+#[derive(Clone)]
+struct LockComponentBinary {
+    logical_path: String,
+    source: PathBuf,
 }
 
 struct AssetFile {
@@ -284,6 +295,7 @@ fn assemble_manifest(
     Ok(BuildProducts {
         manifest,
         components: components.into_iter().map(|(_, bin)| bin).collect(),
+        lock_components: Vec::new(),
         flow_files,
         assets,
     })
@@ -986,6 +998,21 @@ fn package_gtpack(
         )?;
     }
 
+    let mut lock_components = build.lock_components.clone();
+    lock_components.sort_by(|a, b| a.logical_path.cmp(&b.logical_path));
+    for comp in lock_components {
+        let bytes = fs::read(&comp.source).with_context(|| {
+            format!("failed to read cached component {}", comp.source.display())
+        })?;
+        record_sbom_entry(
+            &mut sbom_entries,
+            &comp.logical_path,
+            &bytes,
+            "application/wasm",
+        );
+        write_zip_entry(&mut writer, &comp.logical_path, &bytes, options)?;
+    }
+
     if bundle != BundleMode::None {
         let mut components = build.components.clone();
         components.sort_by(|a, b| a.id.cmp(&b.id));
@@ -1046,6 +1073,63 @@ fn package_gtpack(
         .finish()
         .context("failed to finalise gtpack archive")?;
     Ok(())
+}
+
+async fn collect_lock_component_artifacts(
+    lock: &greentic_pack::pack_lock::PackLockV1,
+    runtime: &RuntimeContext,
+    bundle: BundleMode,
+    allow_missing: bool,
+) -> Result<Vec<LockComponentBinary>> {
+    if bundle != BundleMode::Cache {
+        return Ok(Vec::new());
+    }
+
+    let dist = DistClient::new(DistOptions {
+        cache_dir: runtime.cache_dir(),
+        allow_tags: true,
+        offline: runtime.network_policy() == NetworkPolicy::Offline,
+    });
+
+    let mut artifacts = Vec::new();
+    for comp in &lock.components {
+        if comp.r#ref.starts_with("file://") {
+            continue;
+        }
+        let logical_path = format!("components/{}.wasm", comp.name);
+
+        let mut cache_path = dist
+            .ensure_cached(&comp.digest)
+            .await
+            .ok()
+            .and_then(|item| item.cache_path);
+        if cache_path.is_none()
+            && runtime.network_policy() != NetworkPolicy::Offline
+            && !allow_missing
+            && comp.r#ref.starts_with("oci://")
+        {
+            let resolved = dist
+                .resolve_ref(&comp.r#ref)
+                .await
+                .map_err(|err| anyhow!("failed to resolve {}: {}", comp.r#ref, err))?;
+            cache_path = resolved.cache_path;
+        }
+
+        let Some(cache_path) = cache_path else {
+            eprintln!(
+                "warning: component {} is not cached; skipping embed",
+                comp.name
+            );
+            continue;
+        };
+
+        artifacts.push(LockComponentBinary {
+            logical_path,
+            source: cache_path,
+        });
+    }
+
+    Ok(artifacts)
 }
 
 fn record_sbom_entry(entries: &mut Vec<SbomEntry>, path: &str, bytes: &[u8], media_type: &str) {
@@ -1262,6 +1346,8 @@ mod tests {
     use greentic_pack::pack_lock::{LockedComponent, PackLockV1};
     use greentic_types::flow::FlowKind;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
+    use std::fs::File;
     use std::io::Read;
     use std::{fs, path::PathBuf};
     use tempfile::tempdir;
@@ -1392,6 +1478,7 @@ mod tests {
                     format!("sha256:{:x}", sha.finalize())
                 },
             }],
+            lock_components: Vec::new(),
             flow_files: Vec::new(),
             assets: Vec::new(),
         };
@@ -1499,6 +1586,245 @@ mod tests {
             decoded.components[0].source,
             ComponentSourceRef::Oci(_)
         ));
+    }
+
+    #[test]
+    fn build_embeds_lock_components_from_cache() {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(async {
+            let temp = tempdir().expect("temp dir");
+            let pack_dir = temp.path().join("pack");
+            fs::create_dir_all(pack_dir.join("flows")).expect("flows dir");
+            fs::create_dir_all(pack_dir.join("components")).expect("components dir");
+
+            let wasm_path = pack_dir.join("components/dummy.wasm");
+            fs::write(&wasm_path, [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])
+                .expect("write wasm");
+
+            let flow_path = pack_dir.join("flows/main.ygtc");
+            fs::write(
+                &flow_path,
+                r#"id: main
+type: messaging
+start: call
+nodes:
+  call:
+    handle_message:
+      text: "hi"
+    routing: out
+"#,
+            )
+            .expect("write flow");
+
+            let cache_dir = temp.path().join("cache");
+            let cached_bytes = b"cached-component";
+            let digest = format!("sha256:{:x}", Sha256::digest(cached_bytes));
+            let cache_path = cache_dir
+                .join(digest.trim_start_matches("sha256:"))
+                .join("component.wasm");
+            fs::create_dir_all(cache_path.parent().expect("cache parent")).expect("cache dir");
+            fs::write(&cache_path, cached_bytes).expect("write cached");
+
+            let sidecar = serde_json::json!({
+                "schema_version": 1,
+                "flow": "flows/main.ygtc",
+                "nodes": {
+                    "call": {
+                        "source": {
+                            "kind": "oci",
+                            "ref": format!("oci://ghcr.io/demo/component@{digest}"),
+                            "digest": digest,
+                        }
+                    }
+                }
+            });
+            fs::write(
+                flow_path.with_extension("ygtc.resolve.json"),
+                serde_json::to_vec_pretty(&sidecar).expect("sidecar json"),
+            )
+            .expect("write sidecar");
+
+            let pack_yaml = r#"pack_id: demo.lock-bundle
+version: 0.1.0
+kind: application
+publisher: Test
+components:
+  - id: dummy.component
+    version: "0.1.0"
+    world: "greentic:component/component@0.5.0"
+    supports: ["messaging"]
+    profiles:
+      default: "stateless"
+      supported: ["stateless"]
+    capabilities:
+      wasi: {}
+      host: {}
+    operations:
+      - name: "handle_message"
+        input_schema: {}
+        output_schema: {}
+    wasm: "components/dummy.wasm"
+flows:
+  - id: main
+    file: flows/main.ygtc
+    tags: [default]
+    entrypoints: [main]
+"#;
+            fs::write(pack_dir.join("pack.yaml"), pack_yaml).expect("pack.yaml");
+
+            let runtime = crate::runtime::resolve_runtime(
+                Some(pack_dir.as_path()),
+                Some(cache_dir.as_path()),
+                true,
+                None,
+            )
+            .expect("runtime");
+
+            let opts = BuildOptions {
+                pack_dir: pack_dir.clone(),
+                component_out: None,
+                manifest_out: pack_dir.join("dist/manifest.cbor"),
+                sbom_out: None,
+                gtpack_out: Some(pack_dir.join("dist/pack.gtpack")),
+                lock_path: pack_dir.join("pack.lock.json"),
+                bundle: BundleMode::Cache,
+                dry_run: false,
+                secrets_req: None,
+                default_secret_scope: None,
+                allow_oci_tags: false,
+                runtime,
+                skip_update: false,
+            };
+
+            run(&opts).await.expect("build");
+
+            let gtpack_path = opts.gtpack_out.expect("gtpack path");
+            let mut archive = ZipArchive::new(File::open(&gtpack_path).expect("open gtpack"))
+                .expect("read gtpack");
+            assert!(
+                archive.by_name("components/main::call.wasm").is_ok(),
+                "missing lock component artifact in gtpack"
+            );
+        });
+    }
+
+    #[test]
+    #[ignore = "requires network access to fetch OCI component"]
+    fn build_fetches_and_embeds_lock_components_online() {
+        if std::env::var("GREENTIC_PACK_ONLINE").is_err() {
+            return;
+        }
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(async {
+            let temp = tempdir().expect("temp dir");
+            let pack_dir = temp.path().join("pack");
+            fs::create_dir_all(pack_dir.join("flows")).expect("flows dir");
+            fs::create_dir_all(pack_dir.join("components")).expect("components dir");
+
+            let wasm_path = pack_dir.join("components/dummy.wasm");
+            fs::write(&wasm_path, [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])
+                .expect("write wasm");
+
+            let flow_path = pack_dir.join("flows/main.ygtc");
+            fs::write(
+                &flow_path,
+                r#"id: main
+type: messaging
+start: call
+nodes:
+  call:
+    handle_message:
+      text: "hi"
+    routing: out
+"#,
+            )
+            .expect("write flow");
+
+            let digest =
+                "sha256:0904bee6ecd737506265e3f38f3e4fe6b185c20fd1b0e7c06ce03cdeedc00340";
+            let sidecar = serde_json::json!({
+                "schema_version": 1,
+                "flow": "flows/main.ygtc",
+                "nodes": {
+                    "call": {
+                        "source": {
+                            "kind": "oci",
+                            "ref": format!("oci://ghcr.io/greentic-ai/components/templates@{digest}"),
+                            "digest": digest,
+                        }
+                    }
+                }
+            });
+            fs::write(
+                flow_path.with_extension("ygtc.resolve.json"),
+                serde_json::to_vec_pretty(&sidecar).expect("sidecar json"),
+            )
+            .expect("write sidecar");
+
+            let pack_yaml = r#"pack_id: demo.lock-online
+version: 0.1.0
+kind: application
+publisher: Test
+components:
+  - id: dummy.component
+    version: "0.1.0"
+    world: "greentic:component/component@0.5.0"
+    supports: ["messaging"]
+    profiles:
+      default: "stateless"
+      supported: ["stateless"]
+    capabilities:
+      wasi: {}
+      host: {}
+    operations:
+      - name: "handle_message"
+        input_schema: {}
+        output_schema: {}
+    wasm: "components/dummy.wasm"
+flows:
+  - id: main
+    file: flows/main.ygtc
+    tags: [default]
+    entrypoints: [main]
+"#;
+            fs::write(pack_dir.join("pack.yaml"), pack_yaml).expect("pack.yaml");
+
+            let cache_dir = temp.path().join("cache");
+            let runtime = crate::runtime::resolve_runtime(
+                Some(pack_dir.as_path()),
+                Some(cache_dir.as_path()),
+                false,
+                None,
+            )
+            .expect("runtime");
+
+            let opts = BuildOptions {
+                pack_dir: pack_dir.clone(),
+                component_out: None,
+                manifest_out: pack_dir.join("dist/manifest.cbor"),
+                sbom_out: None,
+                gtpack_out: Some(pack_dir.join("dist/pack.gtpack")),
+                lock_path: pack_dir.join("pack.lock.json"),
+                bundle: BundleMode::Cache,
+                dry_run: false,
+                secrets_req: None,
+                default_secret_scope: None,
+                allow_oci_tags: false,
+                runtime,
+                skip_update: false,
+            };
+
+            run(&opts).await.expect("build");
+
+            let gtpack_path = opts.gtpack_out.expect("gtpack path");
+            let mut archive =
+                ZipArchive::new(File::open(&gtpack_path).expect("open gtpack"))
+                    .expect("read gtpack");
+            assert!(
+                archive.by_name("components/main::call.wasm").is_ok(),
+                "missing lock component artifact in gtpack"
+            );
+        });
     }
 
     #[test]
