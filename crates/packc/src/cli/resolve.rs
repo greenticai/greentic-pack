@@ -141,6 +141,7 @@ fn normalize_local(flow_path: &Path, rel: &str) -> Result<PathBuf> {
     let parent = flow_path
         .parent()
         .ok_or_else(|| anyhow!("flow path {} has no parent", flow_path.display()))?;
+    let rel = rel.strip_prefix("file://").unwrap_or(rel);
     Ok(parent.join(rel))
 }
 
