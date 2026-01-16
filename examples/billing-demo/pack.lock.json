@@ -4,7 +4,8 @@
     {
       "name": "main___start",
       "ref": "file:///projects/ai/greentic-ng/greentic-pack/examples/billing-demo/flows/../components/templating.handlebars.wasm",
-      "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476"
+      "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+      "component_id": "templating.handlebars"
     }
   ]
 }

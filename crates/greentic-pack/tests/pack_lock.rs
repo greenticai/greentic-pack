@@ -13,11 +13,13 @@ fn pack_lock_roundtrips_with_sorted_components() {
             name: "beta".into(),
             r#ref: "oci://example/beta:1.0.0".into(),
             digest: "sha256:bbbb".into(),
+            component_id: None,
         },
         LockedComponent {
             name: "alpha".into(),
             r#ref: "repo://example/alpha?rev=1".into(),
             digest: "sha256:aaaa".into(),
+            component_id: None,
         },
     ]);
 

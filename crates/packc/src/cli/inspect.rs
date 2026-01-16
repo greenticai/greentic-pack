@@ -9,12 +9,14 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use greentic_pack::{PackLoad, SigningPolicy, open_pack};
+use greentic_types::ComponentId;
 use greentic_types::component_source::ComponentSourceRef;
 use greentic_types::pack::extensions::component_sources::{
     ArtifactLocationV1, ComponentSourcesV1, EXT_COMPONENT_SOURCES_V1,
 };
 use greentic_types::pack_manifest::PackManifest;
 use greentic_types::provider::ProviderDecl;
+use serde_json::Value;
 use tempfile::TempDir;
 
 use crate::build;
@@ -57,6 +59,7 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
         }
     };
     validate_pack_files(&load)?;
+    validate_component_references(&load)?;
 
     if json {
         let payload = serde_json::json!({
@@ -290,6 +293,76 @@ fn validate_pack_files(load: &PackLoad) -> Result<()> {
     } else {
         let items = missing.into_iter().collect::<Vec<_>>().join(", ");
         bail!("pack is missing required files: {}", items);
+    }
+}
+
+fn validate_component_references(load: &PackLoad) -> Result<()> {
+    let mut known: BTreeSet<ComponentId> = BTreeSet::new();
+    for component in &load.manifest.components {
+        let id = ComponentId::new(component.name.clone()).with_context(|| {
+            format!(
+                "pack manifest contains invalid component id {}",
+                component.name
+            )
+        })?;
+        known.insert(id);
+    }
+
+    let mut source_ids: BTreeSet<ComponentId> = BTreeSet::new();
+    if let Some(gmanifest) = load.gpack_manifest.as_ref()
+        && let Some(value) = gmanifest
+            .extensions
+            .as_ref()
+            .and_then(|m| m.get(EXT_COMPONENT_SOURCES_V1))
+            .and_then(|ext| ext.inline.as_ref())
+            .and_then(|inline| match inline {
+                greentic_types::ExtensionInline::Other(v) => Some(v),
+                _ => None,
+            })
+        && let Ok(cs) = ComponentSourcesV1::from_extension_value(value)
+    {
+        for entry in cs.components {
+            if let Some(id) = entry.component_id {
+                source_ids.insert(id);
+            }
+        }
+    }
+
+    let mut missing = BTreeSet::new();
+    for flow in &load.manifest.flows {
+        let Some(bytes) = load.files.get(&flow.file_json) else {
+            continue;
+        };
+        let flow_json: Value = serde_json::from_slice(bytes)
+            .with_context(|| format!("failed to decode flow json {}", flow.file_json))?;
+        let Some(nodes) = flow_json.get("nodes").and_then(|val| val.as_object()) else {
+            continue;
+        };
+        for node in nodes.values() {
+            let Some(component_id) = node
+                .get("component")
+                .and_then(|val| val.get("id"))
+                .and_then(|val| val.as_str())
+            else {
+                continue;
+            };
+            let parsed = ComponentId::new(component_id).with_context(|| {
+                format!(
+                    "flow {} contains invalid component id {}",
+                    flow.id, component_id
+                )
+            })?;
+            if !known.contains(&parsed) && !source_ids.contains(&parsed) {
+                missing.insert(parsed.to_string());
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        let items = missing.into_iter().collect::<Vec<_>>().join(", ");
+        bail!("pack references components missing from manifest/component sources: {items}");
     }
 }
 

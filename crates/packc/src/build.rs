@@ -819,7 +819,7 @@ fn merge_component_sources_extension(
         };
         entries.push(ComponentSourceEntryV1 {
             name: comp.name.clone(),
-            component_id: None,
+            component_id: comp.component_id.clone(),
             source,
             resolved: ResolvedComponentV1 {
                 digest: comp.digest.clone(),
@@ -1486,6 +1486,7 @@ mod tests {
             name: "demo.component".into(),
             r#ref: "oci://ghcr.io/demo/component:1.0.0".into(),
             digest: "sha256:deadbeef".into(),
+            component_id: None,
         }]);
 
         let ext_none =
@@ -1527,6 +1528,7 @@ mod tests {
             name: "local.component".into(),
             r#ref: "file:///tmp/component.wasm".into(),
             digest: "sha256:deadbeef".into(),
+            component_id: None,
         }]);
 
         let ext_none =
@@ -1538,11 +1540,13 @@ mod tests {
                 name: "local.component".into(),
                 r#ref: "file:///tmp/component.wasm".into(),
                 digest: "sha256:deadbeef".into(),
+                component_id: None,
             },
             LockedComponent {
                 name: "remote.component".into(),
                 r#ref: "oci://ghcr.io/demo/component:2.0.0".into(),
                 digest: "sha256:cafebabe".into(),
+                component_id: None,
             },
         ]);
 

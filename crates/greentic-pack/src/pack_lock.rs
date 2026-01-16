@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use greentic_types::ComponentId;
 use serde::{Deserialize, Serialize};
 
 /// Canonical pack lock format (v1).
@@ -19,6 +20,8 @@ pub struct LockedComponent {
     pub name: String,
     pub r#ref: String,
     pub digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component_id: Option<ComponentId>,
 }
 
 impl PackLockV1 {
@@ -39,6 +42,11 @@ pub fn validate_pack_lock(lock: &PackLockV1) -> Result<()> {
     for component in &lock.components {
         if component.name.trim().is_empty() {
             anyhow::bail!("pack.lock component name must not be empty");
+        }
+        if let Some(component_id) = component.component_id.as_ref()
+            && component_id.as_str().trim().is_empty()
+        {
+            anyhow::bail!("pack.lock component_id must not be empty when set");
         }
         if component.r#ref.trim().is_empty() {
             anyhow::bail!("pack.lock component ref must not be empty");

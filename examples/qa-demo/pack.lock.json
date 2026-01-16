@@ -4,32 +4,38 @@
     {
       "name": "qa_answer_flow___call_llm",
       "ref": "repo://io.3bridges.components.llm.openai@1.0.0",
-      "digest": "sha256:deadbeef"
+      "digest": "sha256:deadbeef",
+      "component_id": "llm.openai.chat"
     },
     {
       "name": "qa_answer_flow___package_messages",
       "ref": "repo://io.3bridges.components.flow@1.0.0",
-      "digest": "sha256:deadbeef"
+      "digest": "sha256:deadbeef",
+      "component_id": "flow.return"
     },
     {
       "name": "qa_orchestrator___call_specialist",
       "ref": "repo://io.3bridges.components.flow@1.0.0",
-      "digest": "sha256:deadbeef"
+      "digest": "sha256:deadbeef",
+      "component_id": "flow.call"
     },
     {
       "name": "qa_orchestrator___collect_question",
       "ref": "repo://io.3bridges.components.qa@1.0.0",
-      "digest": "sha256:deadbeef"
+      "digest": "sha256:deadbeef",
+      "component_id": "qa.process"
     },
     {
       "name": "qa_orchestrator___load_profile",
       "ref": "repo://io.3bridges.components.state@1.0.0",
-      "digest": "sha256:deadbeef"
+      "digest": "sha256:deadbeef",
+      "component_id": "state.get"
     },
     {
       "name": "qa_orchestrator___respond_to_user",
       "ref": "repo://io.3bridges.components.messaging@1.0.0",
-      "digest": "sha256:deadbeef"
+      "digest": "sha256:deadbeef",
+      "component_id": "messaging.emit"
     }
   ]
 }

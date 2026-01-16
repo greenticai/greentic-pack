@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, write_pack_lock};
+use greentic_types::ComponentId;
 use greentic_types::flow_resolve_summary::{FlowResolveSummarySourceRefV1, FlowResolveSummaryV1};
 
 use crate::config::load_pack_config;
@@ -61,7 +62,7 @@ fn collect_from_summary(
     doc: &FlowResolveSummaryV1,
     out: &mut Vec<LockedComponent>,
 ) -> Result<()> {
-    let mut seen: BTreeMap<String, (String, String)> = BTreeMap::new();
+    let mut seen: BTreeMap<String, (String, String, ComponentId)> = BTreeMap::new();
 
     for (node, resolve) in &doc.nodes {
         let name = format!("{}___{node}", flow.id);
@@ -80,14 +81,15 @@ fn collect_from_summary(
                 (format_reference(source_ref), resolve.digest.clone())
             }
         };
-        seen.insert(name, (reference, digest));
+        seen.insert(name, (reference, digest, resolve.component_id.clone()));
     }
 
-    for (name, (reference, digest)) in seen {
+    for (name, (reference, digest, component_id)) in seen {
         out.push(LockedComponent {
             name,
             r#ref: reference,
             digest,
+            component_id: Some(component_id),
         });
     }
 
