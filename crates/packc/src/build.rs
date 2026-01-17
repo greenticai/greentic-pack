@@ -1159,8 +1159,9 @@ async fn collect_lock_component_artifacts(
 
         comp.bundled = true;
         comp.bundled_path = Some(logical_path.clone());
-        comp.wasm_sha256 = Some(wasm_sha256);
+        comp.wasm_sha256 = Some(wasm_sha256.clone());
         if is_tag {
+            comp.digest = format!("sha256:{wasm_sha256}");
             comp.resolved_digest = Some(resolved.item.digest.clone());
         } else {
             comp.resolved_digest = None;
