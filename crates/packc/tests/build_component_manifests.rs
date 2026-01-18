@@ -55,7 +55,39 @@ fn cache_component(cache_dir: &Path, digest: &str, include_manifest: bool) {
     }
 }
 
+fn read_resolve_digest(pack_dir: &Path) -> Option<String> {
+    let flow_dir = pack_dir.join("flows");
+    if !flow_dir.exists() {
+        return None;
+    }
+    for entry in WalkDir::new(&flow_dir).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".resolve.summary.json"))
+        {
+            continue;
+        }
+        let data = fs::read(path).expect("read resolve summary");
+        let payload: Value = serde_json::from_slice(&data).expect("parse resolve summary");
+        let nodes = payload.get("nodes").and_then(|val| val.as_object());
+        if let Some(nodes) = nodes {
+            for node in nodes.values() {
+                if let Some(digest) = node.get("digest").and_then(|val| val.as_str()) {
+                    return Some(digest.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 fn read_lock_digest(pack_dir: &Path) -> String {
+    if let Some(digest) = read_resolve_digest(pack_dir) {
+        return digest;
+    }
     let lock_path = pack_dir.join("pack.lock.json");
     let data = fs::read(&lock_path).expect("read pack.lock.json");
     let payload: Value = serde_json::from_slice(&data).expect("parse pack.lock.json");

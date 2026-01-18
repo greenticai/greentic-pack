@@ -1003,34 +1003,51 @@ fn package_gtpack(
         .unix_permissions(0o644);
 
     let mut sbom_entries = Vec::new();
+    let mut written_paths = BTreeSet::new();
     record_sbom_entry(
         &mut sbom_entries,
         "manifest.cbor",
         manifest_bytes,
         "application/cbor",
     );
+    written_paths.insert("manifest.cbor".to_string());
     write_zip_entry(&mut writer, "manifest.cbor", manifest_bytes, options)?;
 
     let mut flow_files = build.flow_files.clone();
     flow_files.sort_by(|a, b| a.logical_path.cmp(&b.logical_path));
     for flow_file in flow_files {
-        record_sbom_entry(
-            &mut sbom_entries,
-            &flow_file.logical_path,
-            &flow_file.bytes,
-            flow_file.media_type,
-        );
-        write_zip_entry(
-            &mut writer,
-            &flow_file.logical_path,
-            &flow_file.bytes,
-            options,
-        )?;
+        if written_paths.insert(flow_file.logical_path.clone()) {
+            record_sbom_entry(
+                &mut sbom_entries,
+                &flow_file.logical_path,
+                &flow_file.bytes,
+                flow_file.media_type,
+            );
+            write_zip_entry(
+                &mut writer,
+                &flow_file.logical_path,
+                &flow_file.bytes,
+                options,
+            )?;
+        }
+    }
+
+    let mut component_wasm_paths = BTreeSet::new();
+    if bundle != BundleMode::None {
+        for comp in &build.components {
+            component_wasm_paths.insert(format!("components/{}.wasm", comp.id));
+        }
     }
 
     let mut lock_components = build.lock_components.clone();
     lock_components.sort_by(|a, b| a.logical_path.cmp(&b.logical_path));
     for comp in lock_components {
+        if component_wasm_paths.contains(&comp.logical_path) {
+            continue;
+        }
+        if !written_paths.insert(comp.logical_path.clone()) {
+            continue;
+        }
         let bytes = fs::read(&comp.source).with_context(|| {
             format!("failed to read cached component {}", comp.source.display())
         })?;
@@ -1046,18 +1063,20 @@ fn package_gtpack(
     let mut lock_manifests = build.component_manifest_files.clone();
     lock_manifests.sort_by(|a, b| a.manifest_path.cmp(&b.manifest_path));
     for manifest in lock_manifests {
-        record_sbom_entry(
-            &mut sbom_entries,
-            &manifest.manifest_path,
-            &manifest.manifest_bytes,
-            "application/cbor",
-        );
-        write_zip_entry(
-            &mut writer,
-            &manifest.manifest_path,
-            &manifest.manifest_bytes,
-            options,
-        )?;
+        if written_paths.insert(manifest.manifest_path.clone()) {
+            record_sbom_entry(
+                &mut sbom_entries,
+                &manifest.manifest_path,
+                &manifest.manifest_bytes,
+                "application/cbor",
+            );
+            write_zip_entry(
+                &mut writer,
+                &manifest.manifest_path,
+                &manifest.manifest_bytes,
+                options,
+            )?;
+        }
     }
 
     if bundle != BundleMode::None {
@@ -1067,26 +1086,30 @@ fn package_gtpack(
             let logical_wasm = format!("components/{}.wasm", comp.id);
             let wasm_bytes = fs::read(&comp.source)
                 .with_context(|| format!("failed to read component {}", comp.source.display()))?;
-            record_sbom_entry(
-                &mut sbom_entries,
-                &logical_wasm,
-                &wasm_bytes,
-                "application/wasm",
-            );
-            write_zip_entry(&mut writer, &logical_wasm, &wasm_bytes, options)?;
+            if written_paths.insert(logical_wasm.clone()) {
+                record_sbom_entry(
+                    &mut sbom_entries,
+                    &logical_wasm,
+                    &wasm_bytes,
+                    "application/wasm",
+                );
+                write_zip_entry(&mut writer, &logical_wasm, &wasm_bytes, options)?;
+            }
 
-            record_sbom_entry(
-                &mut sbom_entries,
-                &comp.manifest_path,
-                &comp.manifest_bytes,
-                "application/cbor",
-            );
-            write_zip_entry(
-                &mut writer,
-                &comp.manifest_path,
-                &comp.manifest_bytes,
-                options,
-            )?;
+            if written_paths.insert(comp.manifest_path.clone()) {
+                record_sbom_entry(
+                    &mut sbom_entries,
+                    &comp.manifest_path,
+                    &comp.manifest_bytes,
+                    "application/cbor",
+                );
+                write_zip_entry(
+                    &mut writer,
+                    &comp.manifest_path,
+                    &comp.manifest_bytes,
+                    options,
+                )?;
+            }
         }
     }
 
@@ -1099,13 +1122,15 @@ fn package_gtpack(
     for (logical, source) in asset_entries {
         let bytes = fs::read(&source)
             .with_context(|| format!("failed to read asset {}", source.display()))?;
-        record_sbom_entry(
-            &mut sbom_entries,
-            &logical,
-            &bytes,
-            "application/octet-stream",
-        );
-        write_zip_entry(&mut writer, &logical, &bytes, options)?;
+        if written_paths.insert(logical.clone()) {
+            record_sbom_entry(
+                &mut sbom_entries,
+                &logical,
+                &bytes,
+                "application/octet-stream",
+            );
+            write_zip_entry(&mut writer, &logical, &bytes, options)?;
+        }
     }
 
     sbom_entries.sort_by(|a, b| a.path.cmp(&b.path));

@@ -330,11 +330,14 @@ fn run_pack_validation(load: &PackLoad) -> ValidationReport {
             pack_id: None,
             pack_version: None,
             diagnostics: vec![Diagnostic {
-                severity: Severity::Error,
-                code: "PACK_MANIFEST_MISSING".to_string(),
-                message: "Pack manifest could not be decoded for validation.".to_string(),
+                severity: Severity::Warn,
+                code: "PACK_MANIFEST_UNSUPPORTED".to_string(),
+                message: "Pack manifest is not in the greentic-types format; skipping validation."
+                    .to_string(),
                 path: Some("manifest.cbor".to_string()),
-                hint: Some("Rebuild the pack to regenerate manifest.cbor.".to_string()),
+                hint: Some(
+                    "Rebuild the pack with greentic-pack build to enable validation.".to_string(),
+                ),
                 data: Value::Null,
             }],
         }
