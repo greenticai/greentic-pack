@@ -1463,11 +1463,11 @@ fn load_component_manifest_for_lock(
         search_paths.extend(component_manifest_search_paths(pack_dir, id));
     }
     search_paths.extend(component_manifest_search_paths(pack_dir, &lock_entry.name));
-    if let Some(source) = bundled_source {
-        if let Some(parent) = source.parent() {
-            search_paths.push(parent.join("component.manifest.cbor"));
-            search_paths.push(parent.join("component.manifest.json"));
-        }
+    if let Some(source) = bundled_source
+        && let Some(parent) = source.parent()
+    {
+        search_paths.push(parent.join("component.manifest.cbor"));
+        search_paths.push(parent.join("component.manifest.json"));
     }
 
     for path in search_paths {
@@ -1861,6 +1861,7 @@ mod tests {
                 },
             }],
             lock_components: Vec::new(),
+            component_manifest_files: Vec::new(),
             flow_files: Vec::new(),
             assets: Vec::new(),
         };

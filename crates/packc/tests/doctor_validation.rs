@@ -4,7 +4,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use assert_cmd::prelude::*;
 use greentic_types::{PackManifest, encode_pack_manifest};
 use serde_json::Value;
 use zip::CompressionMethod;
@@ -128,7 +127,7 @@ fn write_gtpack_from_fixture(fixture: &Path, dest: &Path) {
 
     let dest_file = File::create(dest).expect("create pack");
     let mut writer = ZipWriter::new(dest_file);
-    let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+    let options = FileOptions::<()>::default().compression_method(CompressionMethod::Stored);
 
     writer
         .start_file("manifest.cbor", options)

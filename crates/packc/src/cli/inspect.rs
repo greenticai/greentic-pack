@@ -320,7 +320,7 @@ fn run_pack_validation(load: &PackLoad) -> ValidationReport {
         Box::new(ReferencedFilesExistValidator::new(ctx.clone())),
         Box::new(SbomConsistencyValidator::new(ctx.clone())),
         Box::new(ProviderReferencesExistValidator::new(ctx.clone())),
-        Box::new(ComponentReferencesExistValidator::default()),
+        Box::new(ComponentReferencesExistValidator),
     ];
 
     if let Some(manifest) = load.gpack_manifest.as_ref() {

@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use assert_cmd::prelude::*;
 use greentic_types::decode_pack_manifest;
 use serde_json::Value;
 use tempfile::TempDir;
