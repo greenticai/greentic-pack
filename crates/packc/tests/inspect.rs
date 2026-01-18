@@ -6,7 +6,6 @@ use std::process::Command;
 use assert_cmd::prelude::*;
 use greentic_pack::builder::{ComponentArtifact, FlowBundle, PackBuilder, PackMeta};
 use greentic_pack::messaging::{MessagingAdapter, MessagingAdapterKind, MessagingSection};
-use predicates::prelude::PredicateBooleanExt;
 use semver::Version;
 use serde_json::Value;
 use serde_json::json;
@@ -133,16 +132,35 @@ fn doctor_reports_missing_archive_files() {
     )
     .expect("strip component wasm from pack");
 
-    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
-        .args(["doctor", "--pack", missing_path.to_str().unwrap()])
-        .assert()
-        .failure()
-        .stderr(
-            predicates::str::contains("missing file").and(predicates::str::contains(
-                "components/demo.component@1.0.0/component.wasm",
-            )),
-        );
+        .args(["doctor", "--pack", missing_path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("run doctor");
+    assert!(
+        !output.status.success(),
+        "doctor should fail on missing files"
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let diagnostics = payload
+        .get("validation")
+        .and_then(|val| val.get("diagnostics"))
+        .and_then(|val| val.as_array())
+        .expect("validation diagnostics present");
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.get("code")
+                .and_then(|val| val.as_str())
+                .map(|code| code == "PACK_MISSING_FILE")
+                .unwrap_or(false)
+                && diag
+                    .get("path")
+                    .and_then(|val| val.as_str())
+                    .map(|path| path == "components/demo.component@1.0.0/component.wasm")
+                    .unwrap_or(false)
+        }),
+        "expected missing file diagnostic for component wasm"
+    );
 
     drop(temp_dir);
 }

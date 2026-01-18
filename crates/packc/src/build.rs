@@ -69,6 +69,7 @@ pub struct BuildOptions {
     pub secrets_req: Option<PathBuf>,
     pub default_secret_scope: Option<String>,
     pub allow_oci_tags: bool,
+    pub require_component_manifests: bool,
     pub runtime: RuntimeContext,
     pub skip_update: bool,
 }
@@ -119,6 +120,7 @@ impl BuildOptions {
             secrets_req: args.secrets_req,
             default_secret_scope: args.default_secret_scope,
             allow_oci_tags: args.allow_oci_tags,
+            require_component_manifests: args.require_component_manifests,
             runtime: runtime.clone(),
             skip_update: args.no_update,
         })
@@ -186,8 +188,29 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
     build.lock_components =
         collect_lock_component_artifacts(&mut pack_lock, &opts.runtime, opts.bundle, opts.dry_run)
             .await?;
+
+    let materialized = materialize_flow_components(
+        &opts.pack_dir,
+        &build.manifest.flows,
+        &pack_lock,
+        &build.components,
+        &build.lock_components,
+        opts.require_component_manifests,
+    )?;
+    build.manifest.components.extend(materialized.components);
+    build.component_manifest_files = materialized.manifest_files;
+    build.manifest.components.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let component_manifest_files =
+        collect_component_manifest_files(&build.components, &build.component_manifest_files);
     build.manifest.extensions =
-        merge_component_sources_extension(build.manifest.extensions, &pack_lock, opts.bundle)?;
+        merge_component_manifest_extension(build.manifest.extensions, &component_manifest_files)?;
+    build.manifest.extensions = merge_component_sources_extension(
+        build.manifest.extensions,
+        &pack_lock,
+        opts.bundle,
+        materialized.manifest_paths.as_ref(),
+    )?;
     if !opts.dry_run {
         greentic_pack::pack_lock::write_pack_lock(&opts.lock_path, &pack_lock)?;
     }
@@ -233,6 +256,7 @@ struct BuildProducts {
     manifest: PackManifest,
     components: Vec<ComponentBinary>,
     lock_components: Vec<LockComponentBinary>,
+    component_manifest_files: Vec<ComponentManifestFile>,
     flow_files: Vec<FlowFile>,
     assets: Vec<AssetFile>,
 }
@@ -250,6 +274,14 @@ struct ComponentBinary {
 struct LockComponentBinary {
     logical_path: String,
     source: PathBuf,
+}
+
+#[derive(Clone)]
+struct ComponentManifestFile {
+    component_id: String,
+    manifest_path: String,
+    manifest_bytes: Vec<u8>,
+    manifest_hash_sha256: String,
 }
 
 struct AssetFile {
@@ -275,8 +307,7 @@ fn assemble_manifest(
     let assets = collect_assets(&config.assets, pack_root)?;
     let component_manifests: Vec<_> = components.iter().map(|c| c.0.clone()).collect();
     let bootstrap = build_bootstrap(config, &flows, &component_manifests)?;
-    let extensions =
-        merge_component_manifest_extension(normalize_extensions(&config.extensions), &components)?;
+    let extensions = normalize_extensions(&config.extensions);
 
     let manifest = PackManifest {
         schema_version: "pack-v1".to_string(),
@@ -299,6 +330,7 @@ fn assemble_manifest(
         manifest,
         components: components.into_iter().map(|(_, bin)| bin).collect(),
         lock_components: Vec::new(),
+        component_manifest_files: Vec::new(),
         flow_files,
         assets,
     })
@@ -759,15 +791,19 @@ fn normalize_extensions(
 
 fn merge_component_manifest_extension(
     extensions: Option<BTreeMap<String, ExtensionRef>>,
-    components: &[(ComponentManifest, ComponentBinary)],
+    manifest_files: &[ComponentManifestFile],
 ) -> Result<Option<BTreeMap<String, ExtensionRef>>> {
-    let entries: Vec<_> = components
+    if manifest_files.is_empty() {
+        return Ok(extensions);
+    }
+
+    let entries: Vec<_> = manifest_files
         .iter()
-        .map(|(manifest, binary)| ComponentManifestIndexEntryV1 {
-            component_id: manifest.id.to_string(),
-            manifest_file: binary.manifest_path.clone(),
+        .map(|entry| ComponentManifestIndexEntryV1 {
+            component_id: entry.component_id.clone(),
+            manifest_file: entry.manifest_path.clone(),
             encoding: ManifestEncoding::Cbor,
-            content_hash: Some(binary.manifest_hash_sha256.clone()),
+            content_hash: Some(entry.manifest_hash_sha256.clone()),
         })
         .collect();
 
@@ -797,6 +833,7 @@ fn merge_component_sources_extension(
     extensions: Option<BTreeMap<String, ExtensionRef>>,
     lock: &greentic_pack::pack_lock::PackLockV1,
     _bundle: BundleMode,
+    manifest_paths: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Result<Option<BTreeMap<String, ExtensionRef>>> {
     let mut entries = Vec::new();
     for comp in &lock.components {
@@ -813,6 +850,14 @@ fn merge_component_sources_extension(
                 continue;
             }
         };
+        let manifest_path = manifest_paths.and_then(|paths| {
+            comp.component_id
+                .as_ref()
+                .map(|id| id.as_str())
+                .and_then(|key| paths.get(key))
+                .or_else(|| paths.get(&comp.name))
+                .cloned()
+        });
         let artifact = if comp.bundled {
             let wasm_path = comp.bundled_path.clone().ok_or_else(|| {
                 anyhow!(
@@ -822,7 +867,7 @@ fn merge_component_sources_extension(
             })?;
             ArtifactLocationV1::Inline {
                 wasm_path,
-                manifest_path: None,
+                manifest_path,
             }
         } else {
             ArtifactLocationV1::Remote
@@ -998,6 +1043,23 @@ fn package_gtpack(
         write_zip_entry(&mut writer, &comp.logical_path, &bytes, options)?;
     }
 
+    let mut lock_manifests = build.component_manifest_files.clone();
+    lock_manifests.sort_by(|a, b| a.manifest_path.cmp(&b.manifest_path));
+    for manifest in lock_manifests {
+        record_sbom_entry(
+            &mut sbom_entries,
+            &manifest.manifest_path,
+            &manifest.manifest_bytes,
+            "application/cbor",
+        );
+        write_zip_entry(
+            &mut writer,
+            &manifest.manifest_path,
+            &manifest.manifest_bytes,
+            options,
+        )?;
+    }
+
     if bundle != BundleMode::None {
         let mut components = build.components.clone();
         components.sort_by(|a, b| a.id.cmp(&b.id));
@@ -1074,6 +1136,7 @@ async fn collect_lock_component_artifacts(
     });
 
     let mut artifacts = Vec::new();
+    let mut seen_paths = BTreeSet::new();
     for comp in &mut lock.components {
         if comp.r#ref.starts_with("file://") {
             comp.bundled = false;
@@ -1167,10 +1230,23 @@ async fn collect_lock_component_artifacts(
             comp.resolved_digest = None;
         }
 
-        artifacts.push(LockComponentBinary {
-            logical_path,
-            source: cache_path,
-        });
+        if seen_paths.insert(logical_path.clone()) {
+            artifacts.push(LockComponentBinary {
+                logical_path: logical_path.clone(),
+                source: cache_path.clone(),
+            });
+        }
+        if let Some(component_id) = comp.component_id.as_ref()
+            && comp.bundled
+        {
+            let alias_path = format!("components/{}.wasm", component_id.as_str());
+            if alias_path != logical_path && seen_paths.insert(alias_path.clone()) {
+                artifacts.push(LockComponentBinary {
+                    logical_path: alias_path,
+                    source: cache_path.clone(),
+                });
+            }
+        }
     }
 
     Ok(artifacts)
@@ -1179,6 +1255,12 @@ async fn collect_lock_component_artifacts(
 struct ResolvedLockItem {
     item: greentic_distributor_client::ResolvedArtifact,
     cache_path: PathBuf,
+}
+
+struct MaterializedComponents {
+    components: Vec<ComponentManifest>,
+    manifest_files: Vec<ComponentManifestFile>,
+    manifest_paths: Option<BTreeMap<String, String>>,
 }
 
 fn record_sbom_entry(entries: &mut Vec<SbomEntry>, path: &str, bytes: &[u8], media_type: &str) {
@@ -1217,6 +1299,257 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
 fn write_stub_wasm(path: &Path) -> Result<()> {
     const STUB: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
     write_bytes(path, STUB)
+}
+
+fn collect_component_manifest_files(
+    components: &[ComponentBinary],
+    extra: &[ComponentManifestFile],
+) -> Vec<ComponentManifestFile> {
+    let mut files: Vec<ComponentManifestFile> = components
+        .iter()
+        .map(|binary| ComponentManifestFile {
+            component_id: binary.id.clone(),
+            manifest_path: binary.manifest_path.clone(),
+            manifest_bytes: binary.manifest_bytes.clone(),
+            manifest_hash_sha256: binary.manifest_hash_sha256.clone(),
+        })
+        .collect();
+    files.extend(extra.iter().cloned());
+    files.sort_by(|a, b| a.component_id.cmp(&b.component_id));
+    files.dedup_by(|a, b| a.component_id == b.component_id);
+    files
+}
+
+fn materialize_flow_components(
+    pack_dir: &Path,
+    flows: &[PackFlowEntry],
+    pack_lock: &greentic_pack::pack_lock::PackLockV1,
+    components: &[ComponentBinary],
+    lock_components: &[LockComponentBinary],
+    require_component_manifests: bool,
+) -> Result<MaterializedComponents> {
+    let referenced = collect_flow_component_ids(flows);
+    if referenced.is_empty() {
+        return Ok(MaterializedComponents {
+            components: Vec::new(),
+            manifest_files: Vec::new(),
+            manifest_paths: None,
+        });
+    }
+
+    let mut existing = BTreeSet::new();
+    for component in components {
+        existing.insert(component.id.clone());
+    }
+
+    let mut lock_by_id = BTreeMap::new();
+    let mut lock_by_name = BTreeMap::new();
+    for entry in &pack_lock.components {
+        if let Some(component_id) = entry.component_id.as_ref() {
+            lock_by_id.insert(component_id.as_str().to_string(), entry);
+        }
+        lock_by_name.insert(entry.name.clone(), entry);
+    }
+
+    let mut bundle_sources = BTreeMap::new();
+    for entry in lock_components {
+        bundle_sources.insert(entry.logical_path.clone(), entry.source.clone());
+    }
+
+    let mut materialized_components = Vec::new();
+    let mut manifest_files = Vec::new();
+    let mut manifest_paths: BTreeMap<String, String> = BTreeMap::new();
+
+    for component_id in referenced {
+        if existing.contains(&component_id) {
+            continue;
+        }
+
+        let lock_entry = lock_by_id
+            .get(&component_id)
+            .copied()
+            .or_else(|| lock_by_name.get(&component_id).copied());
+        let Some(lock_entry) = lock_entry else {
+            handle_missing_component_manifest(&component_id, None, require_component_manifests)?;
+            continue;
+        };
+        if !lock_entry.bundled {
+            if require_component_manifests {
+                anyhow::bail!(
+                    "component {} is not bundled; cannot materialize manifest without local artifacts",
+                    lock_entry.name
+                );
+            }
+            eprintln!(
+                "warning: component {} is not bundled; pack will emit PACK_COMPONENT_NOT_EXPLICIT",
+                lock_entry.name
+            );
+            continue;
+        }
+
+        let bundled_source = lock_entry
+            .bundled_path
+            .as_deref()
+            .and_then(|path| bundle_sources.get(path));
+        let manifest = load_component_manifest_for_lock(pack_dir, lock_entry, bundled_source)?;
+
+        let Some(manifest) = manifest else {
+            handle_missing_component_manifest(
+                &component_id,
+                Some(&lock_entry.name),
+                require_component_manifests,
+            )?;
+            continue;
+        };
+
+        if let Some(lock_id) = lock_entry.component_id.as_ref()
+            && manifest.id.as_str() != lock_id.as_str()
+        {
+            anyhow::bail!(
+                "component manifest id {} does not match pack.lock component_id {}",
+                manifest.id.as_str(),
+                lock_id.as_str()
+            );
+        }
+
+        let manifest_file = component_manifest_file_from_manifest(&manifest)?;
+        manifest_paths.insert(
+            manifest.id.as_str().to_string(),
+            manifest_file.manifest_path.clone(),
+        );
+        manifest_paths.insert(lock_entry.name.clone(), manifest_file.manifest_path.clone());
+
+        materialized_components.push(manifest);
+        manifest_files.push(manifest_file);
+    }
+
+    let manifest_paths = if manifest_paths.is_empty() {
+        None
+    } else {
+        Some(manifest_paths)
+    };
+
+    Ok(MaterializedComponents {
+        components: materialized_components,
+        manifest_files,
+        manifest_paths,
+    })
+}
+
+fn collect_flow_component_ids(flows: &[PackFlowEntry]) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for flow in flows {
+        for node in flow.flow.nodes.values() {
+            if node.component.pack_alias.is_some() {
+                continue;
+            }
+            let id = node.component.id.as_str();
+            if !id.is_empty() {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+fn load_component_manifest_for_lock(
+    pack_dir: &Path,
+    lock_entry: &greentic_pack::pack_lock::LockedComponent,
+    bundled_source: Option<&PathBuf>,
+) -> Result<Option<ComponentManifest>> {
+    let mut search_paths = Vec::new();
+    if let Some(component_id) = lock_entry.component_id.as_ref() {
+        let id = component_id.as_str();
+        search_paths.extend(component_manifest_search_paths(pack_dir, id));
+    }
+    search_paths.extend(component_manifest_search_paths(pack_dir, &lock_entry.name));
+    if let Some(source) = bundled_source {
+        if let Some(parent) = source.parent() {
+            search_paths.push(parent.join("component.manifest.cbor"));
+            search_paths.push(parent.join("component.manifest.json"));
+        }
+    }
+
+    for path in search_paths {
+        if path.exists() {
+            return Ok(Some(load_component_manifest_from_file(&path)?));
+        }
+    }
+
+    Ok(None)
+}
+
+fn component_manifest_search_paths(pack_dir: &Path, name: &str) -> Vec<PathBuf> {
+    vec![
+        pack_dir
+            .join("components")
+            .join(format!("{name}.manifest.cbor")),
+        pack_dir
+            .join("components")
+            .join(format!("{name}.manifest.json")),
+        pack_dir
+            .join("components")
+            .join(name)
+            .join("component.manifest.cbor"),
+        pack_dir
+            .join("components")
+            .join(name)
+            .join("component.manifest.json"),
+    ]
+}
+
+fn load_component_manifest_from_file(path: &Path) -> Result<ComponentManifest> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cbor"))
+    {
+        let manifest = serde_cbor::from_slice(&bytes)
+            .with_context(|| format!("{} is not valid CBOR", path.display()))?;
+        return Ok(manifest);
+    }
+
+    let manifest = serde_json::from_slice(&bytes)
+        .with_context(|| format!("{} is not valid JSON", path.display()))?;
+    Ok(manifest)
+}
+
+fn component_manifest_file_from_manifest(
+    manifest: &ComponentManifest,
+) -> Result<ComponentManifestFile> {
+    let manifest_bytes =
+        serde_cbor::to_vec(manifest).context("encode component manifest to cbor")?;
+    let mut sha = Sha256::new();
+    sha.update(&manifest_bytes);
+    let manifest_hash_sha256 = format!("sha256:{:x}", sha.finalize());
+    let manifest_path = format!("components/{}.manifest.cbor", manifest.id.as_str());
+
+    Ok(ComponentManifestFile {
+        component_id: manifest.id.as_str().to_string(),
+        manifest_path,
+        manifest_bytes,
+        manifest_hash_sha256,
+    })
+}
+
+fn handle_missing_component_manifest(
+    component_id: &str,
+    component_name: Option<&str>,
+    require_component_manifests: bool,
+) -> Result<()> {
+    let label = component_name.unwrap_or(component_id);
+    if require_component_manifests {
+        anyhow::bail!(
+            "component manifest metadata missing for {} (supply component.manifest.json or use --require-component-manifests=false)",
+            label
+        );
+    }
+    eprintln!(
+        "warning: component manifest metadata missing for {}; pack will emit PACK_COMPONENT_NOT_EXPLICIT",
+        label
+    );
+    Ok(())
 }
 
 fn aggregate_secret_requirements(
@@ -1566,8 +1899,8 @@ mod tests {
             resolved_digest: Some("sha256:deadbeef".into()),
         }]);
 
-        let ext_none =
-            merge_component_sources_extension(None, &lock_tag, BundleMode::None).expect("ext");
+        let ext_none = merge_component_sources_extension(None, &lock_tag, BundleMode::None, None)
+            .expect("ext");
         let value = match ext_none
             .unwrap()
             .get(EXT_COMPONENT_SOURCES_V1)
@@ -1594,7 +1927,8 @@ mod tests {
         }]);
 
         let ext_none =
-            merge_component_sources_extension(None, &lock_digest, BundleMode::None).expect("ext");
+            merge_component_sources_extension(None, &lock_digest, BundleMode::None, None)
+                .expect("ext");
         let value = match ext_none
             .unwrap()
             .get(EXT_COMPONENT_SOURCES_V1)
@@ -1621,7 +1955,7 @@ mod tests {
         }]);
 
         let ext_cache =
-            merge_component_sources_extension(None, &lock_digest_bundled, BundleMode::Cache)
+            merge_component_sources_extension(None, &lock_digest_bundled, BundleMode::Cache, None)
                 .expect("ext");
         let value = match ext_cache
             .unwrap()
@@ -1652,7 +1986,7 @@ mod tests {
         }]);
 
         let ext_none =
-            merge_component_sources_extension(None, &lock, BundleMode::Cache).expect("ext");
+            merge_component_sources_extension(None, &lock, BundleMode::Cache, None).expect("ext");
         assert!(ext_none.is_none(), "file refs should be omitted");
 
         let lock = PackLockV1::new(vec![
@@ -1679,7 +2013,7 @@ mod tests {
         ]);
 
         let ext_some =
-            merge_component_sources_extension(None, &lock, BundleMode::None).expect("ext");
+            merge_component_sources_extension(None, &lock, BundleMode::None, None).expect("ext");
         let value = match ext_some
             .unwrap()
             .get(EXT_COMPONENT_SOURCES_V1)
@@ -1801,6 +2135,7 @@ flows:
                 secrets_req: None,
                 default_secret_scope: None,
                 allow_oci_tags: false,
+                require_component_manifests: false,
                 runtime,
                 skip_update: false,
             };
@@ -1920,6 +2255,7 @@ flows:
                 secrets_req: None,
                 default_secret_scope: None,
                 allow_oci_tags: false,
+                require_component_manifests: false,
                 runtime,
                 skip_update: false,
             };

@@ -1,0 +1,9 @@
+id: main
+type: messaging
+start: hello
+nodes:
+  hello:
+    handle_message:
+      input: "hi"
+    routing:
+      - out: true

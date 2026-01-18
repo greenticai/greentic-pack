@@ -1,0 +1,14 @@
+{
+  "schema_version": "pack-v1",
+  "pack_id": "dev.local.sbom-dangling",
+  "version": "0.1.0",
+  "kind": "application",
+  "publisher": "Test",
+  "components": [],
+  "flows": [],
+  "dependencies": [],
+  "capabilities": [],
+  "signatures": {
+    "signatures": []
+  }
+}

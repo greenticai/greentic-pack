@@ -187,9 +187,20 @@ fn doctor_rejects_missing_component_sources() {
         !doctor.status.success(),
         "expected doctor to fail for missing component sources"
     );
-    let stderr = String::from_utf8_lossy(&doctor.stderr);
+    let payload: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("valid json output");
+    let diagnostics = payload
+        .get("validation")
+        .and_then(|val| val.get("diagnostics"))
+        .and_then(|val| val.as_array())
+        .expect("validation diagnostics present");
     assert!(
-        stderr.contains("missing from manifest/component sources"),
-        "unexpected stderr: {stderr}"
+        diagnostics.iter().any(|diag| {
+            diag.get("code")
+                .and_then(|val| val.as_str())
+                .map(|code| code == "PACK_MISSING_COMPONENT_REFERENCE")
+                .unwrap_or(false)
+        }),
+        "expected missing component reference diagnostic"
     );
 }

@@ -1,0 +1,17 @@
+{
+  "format": "greentic-sbom-v1",
+  "files": [
+    {
+      "path": "manifest.cbor",
+      "size": 0,
+      "hash_blake3": "0",
+      "media_type": "application/cbor"
+    },
+    {
+      "path": "missing.txt",
+      "size": 0,
+      "hash_blake3": "0",
+      "media_type": "application/octet-stream"
+    }
+  ]
+}

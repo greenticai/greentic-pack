@@ -210,6 +210,7 @@ pub async fn handle(
         secrets_req: None,
         default_secret_scope: None,
         allow_oci_tags: false,
+        require_component_manifests: false,
         runtime: runtime.clone(),
         skip_update: false,
     };

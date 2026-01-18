@@ -1,0 +1,43 @@
+pack_id: dev.local.missing-provider-schema
+version: 0.1.0
+kind: application
+publisher: Test
+
+components:
+  - id: "dev.local.component"
+    version: "0.1.0"
+    world: "greentic:component/component@0.5.0"
+    supports: ["messaging"]
+    profiles:
+      default: "stateless"
+      supported: ["stateless"]
+    capabilities:
+      wasi: {}
+      host: {}
+    operations:
+      - name: "handle_message"
+        input_schema: {}
+        output_schema: {}
+    wasm: "components/fixture.wasm"
+
+flows:
+  - id: main
+    file: flows/main.ygtc
+    tags: [default]
+    entrypoints: [main]
+
+extensions:
+  greentic.ext.provider:
+    kind: greentic.ext.provider
+    version: "1.0.0"
+    digest: "sha256:abc123"
+    inline:
+      providers:
+        - provider_type: "messaging.demo"
+          capabilities: ["send"]
+          ops: ["send"]
+          config_schema_ref: "schemas/messaging/demo/config.schema.json"
+          runtime:
+            component_ref: "demo-provider"
+            export: "provider"
+            world: "greentic:provider/schema-core@1.0.0"

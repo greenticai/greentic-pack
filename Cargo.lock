@@ -1437,9 +1437,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "0.4.25"
+version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261eb9d026da843d05d9f3591fe44f53afd9979dcdbac9f1b6cbd33bdbc831b4"
+checksum = "86e9e7bcb2689b0bf29d4d5d347343fccbf9dcbca7bef5f6cc77f75000b79b6e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.58"
+version = "0.4.59"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack-lib"
-version = "0.4.58"
+version = "0.4.59"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1625,9 +1625,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "0.4.34"
+version = "0.4.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbc14873ed29c9211a82f90137ca9e1ad2ae2d3e0ec47bbaf786dd6ceab14b2b"
+checksum = "d41bfd8b6de33fdf219eaf318c3f412b0742aaba5b05a84d55b99ac8d0220ce3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1642,6 +1642,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "sha2",
  "thiserror 2.0.17",
  "time",
  "tokio",
@@ -1651,9 +1652,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types-macros"
-version = "0.4.34"
+version = "0.4.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20c3a3c9fe142222c90959247a7c4c74943c9409fbcb55032fb243fcb2aaed20"
+checksum = "2c4429aa3c87ff647859e6674246c2982a57002148f6faa33beb12d033359e7d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2655,7 +2656,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.58"
+version = "0.4.59"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -2665,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.58"
+version = "0.4.59"
 
 [[package]]
 name = "parking_lot"
@@ -5662,9 +5663,9 @@ checksum = "40990edd51aae2c2b6907af74ffb635029d5788228222c4bb811e9351c0caad3"
 
 [[package]]
 name = "zmij"
-version = "1.0.14"
+version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd8f3f50b848df28f887acb68e41201b5aea6bc8a8dacc00fb40635ff9a72fea"
+checksum = "94f63c051f4fe3c1509da62131a678643c5b6fbdc9273b2b79d4378ebda003d2"
 
 [[package]]
 name = "zopfli"

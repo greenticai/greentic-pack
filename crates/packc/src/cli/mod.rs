@@ -134,6 +134,10 @@ pub struct BuildArgs {
     /// Allow OCI component refs in extensions to be tag-based (default requires sha256 digest)
     #[arg(long = "allow-oci-tags", default_value_t = false)]
     pub allow_oci_tags: bool,
+
+    /// Require manifest metadata for flow-referenced components
+    #[arg(long, default_value_t = false)]
+    pub require_component_manifests: bool,
 }
 
 pub fn run() -> Result<()> {

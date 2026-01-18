@@ -9,6 +9,7 @@ pub mod path_safety;
 pub mod plan;
 pub mod reader;
 pub mod repo;
+pub mod validate;
 
 pub use kind::PackKind;
 pub use pack_lock::*;

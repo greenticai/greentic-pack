@@ -1,21 +1,24 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
+use greentic_pack::validate::{
+    ComponentReferencesExistValidator, ProviderReferencesExistValidator,
+    ReferencedFilesExistValidator, SbomConsistencyValidator, ValidateCtx, run_validators,
+};
 use greentic_pack::{PackLoad, SigningPolicy, open_pack};
-use greentic_types::ComponentId;
 use greentic_types::component_source::ComponentSourceRef;
 use greentic_types::pack::extensions::component_sources::{
     ArtifactLocationV1, ComponentSourcesV1, EXT_COMPONENT_SOURCES_V1,
 };
 use greentic_types::pack_manifest::PackManifest;
 use greentic_types::provider::ProviderDecl;
+use greentic_types::validate::{Diagnostic, Severity, ValidationReport};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -47,10 +50,28 @@ pub struct InspectArgs {
     /// Allow OCI component refs in extensions to be tag-based (default requires sha256 digest)
     #[arg(long = "allow-oci-tags", default_value_t = false)]
     pub allow_oci_tags: bool,
+
+    /// Output format
+    #[arg(long, value_enum, default_value = "human")]
+    pub format: InspectFormat,
+
+    /// Enable validation (default)
+    #[arg(long, default_value_t = true)]
+    pub validate: bool,
+
+    /// Disable validation
+    #[arg(long = "no-validate", default_value_t = false)]
+    pub no_validate: bool,
 }
 
 pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> Result<()> {
     let mode = resolve_mode(&args)?;
+    let format = resolve_format(&args, json);
+    let validate_enabled = if args.no_validate {
+        false
+    } else {
+        args.validate
+    };
 
     let load = match mode {
         InspectMode::Archive(path) => inspect_pack_file(&path)?,
@@ -58,24 +79,42 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
             inspect_source_dir(&path, runtime, args.allow_oci_tags).await?
         }
     };
-    validate_pack_files(&load)?;
-    validate_component_references(&load)?;
+    let validation = if validate_enabled {
+        Some(run_pack_validation(&load))
+    } else {
+        None
+    };
 
-    if json {
-        let payload = serde_json::json!({
-            "manifest": load.manifest,
-            "report": {
-                "signature_ok": load.report.signature_ok,
-                "sbom_ok": load.report.sbom_ok,
-                "warnings": load.report.warnings,
-            },
-            "sbom": load.sbom,
-        });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-        return Ok(());
+    match format {
+        InspectFormat::Json => {
+            let mut payload = serde_json::json!({
+                "manifest": load.manifest,
+                "report": {
+                    "signature_ok": load.report.signature_ok,
+                    "sbom_ok": load.report.sbom_ok,
+                    "warnings": load.report.warnings,
+                },
+                "sbom": load.sbom,
+            });
+            if let Some(report) = validation.as_ref() {
+                payload["validation"] = serde_json::to_value(report)?;
+            }
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+        InspectFormat::Human => {
+            print_human(&load, validation.as_ref());
+        }
     }
 
-    print_human(&load);
+    if validate_enabled
+        && validation
+            .as_ref()
+            .map(ValidationReport::has_errors)
+            .unwrap_or(false)
+    {
+        bail!("pack validation failed");
+    }
+
     Ok(())
 }
 
@@ -148,6 +187,7 @@ async fn inspect_source_dir(
         secrets_req: None,
         default_secret_scope: None,
         allow_oci_tags,
+        require_component_manifests: false,
         runtime: runtime.clone(),
         skip_update: false,
     };
@@ -157,7 +197,7 @@ async fn inspect_source_dir(
     inspect_pack_file(&gtpack_out)
 }
 
-fn print_human(load: &PackLoad) {
+fn print_human(load: &PackLoad, validation: Option<&ValidationReport>) {
     let manifest = &load.manifest;
     let report = &load.report;
     println!(
@@ -268,101 +308,89 @@ fn print_human(load: &PackLoad) {
             println!("  - {}", warning);
         }
     }
-}
 
-fn validate_pack_files(load: &PackLoad) -> Result<()> {
-    let mut missing = BTreeSet::new();
-
-    for flow in &load.manifest.flows {
-        if !load.files.contains_key(&flow.file_yaml) {
-            missing.insert(flow.file_yaml.clone());
-        }
-        if !load.files.contains_key(&flow.file_json) {
-            missing.insert(flow.file_json.clone());
-        }
-    }
-
-    for component in &load.manifest.components {
-        if !load.files.contains_key(&component.file_wasm) {
-            missing.insert(component.file_wasm.clone());
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        let items = missing.into_iter().collect::<Vec<_>>().join(", ");
-        bail!("pack is missing required files: {}", items);
+    if let Some(report) = validation {
+        print_validation(report);
     }
 }
 
-fn validate_component_references(load: &PackLoad) -> Result<()> {
-    let mut known: BTreeSet<ComponentId> = BTreeSet::new();
-    for component in &load.manifest.components {
-        let id = ComponentId::new(component.name.clone()).with_context(|| {
-            format!(
-                "pack manifest contains invalid component id {}",
-                component.name
-            )
-        })?;
-        known.insert(id);
-    }
+fn run_pack_validation(load: &PackLoad) -> ValidationReport {
+    let ctx = ValidateCtx::from_pack_load(load);
+    let validators: Vec<Box<dyn greentic_types::validate::PackValidator>> = vec![
+        Box::new(ReferencedFilesExistValidator::new(ctx.clone())),
+        Box::new(SbomConsistencyValidator::new(ctx.clone())),
+        Box::new(ProviderReferencesExistValidator::new(ctx.clone())),
+        Box::new(ComponentReferencesExistValidator::default()),
+    ];
 
-    let mut source_ids: BTreeSet<ComponentId> = BTreeSet::new();
-    if let Some(gmanifest) = load.gpack_manifest.as_ref()
-        && let Some(value) = gmanifest
-            .extensions
-            .as_ref()
-            .and_then(|m| m.get(EXT_COMPONENT_SOURCES_V1))
-            .and_then(|ext| ext.inline.as_ref())
-            .and_then(|inline| match inline {
-                greentic_types::ExtensionInline::Other(v) => Some(v),
-                _ => None,
-            })
-        && let Ok(cs) = ComponentSourcesV1::from_extension_value(value)
-    {
-        for entry in cs.components {
-            if let Some(id) = entry.component_id {
-                source_ids.insert(id);
-            }
-        }
-    }
-
-    let mut missing = BTreeSet::new();
-    for flow in &load.manifest.flows {
-        let Some(bytes) = load.files.get(&flow.file_json) else {
-            continue;
-        };
-        let flow_json: Value = serde_json::from_slice(bytes)
-            .with_context(|| format!("failed to decode flow json {}", flow.file_json))?;
-        let Some(nodes) = flow_json.get("nodes").and_then(|val| val.as_object()) else {
-            continue;
-        };
-        for node in nodes.values() {
-            let Some(component_id) = node
-                .get("component")
-                .and_then(|val| val.get("id"))
-                .and_then(|val| val.as_str())
-            else {
-                continue;
-            };
-            let parsed = ComponentId::new(component_id).with_context(|| {
-                format!(
-                    "flow {} contains invalid component id {}",
-                    flow.id, component_id
-                )
-            })?;
-            if !known.contains(&parsed) && !source_ids.contains(&parsed) {
-                missing.insert(parsed.to_string());
-            }
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(())
+    if let Some(manifest) = load.gpack_manifest.as_ref() {
+        run_validators(manifest, &ctx, &validators)
     } else {
-        let items = missing.into_iter().collect::<Vec<_>>().join(", ");
-        bail!("pack references components missing from manifest/component sources: {items}");
+        ValidationReport {
+            pack_id: None,
+            pack_version: None,
+            diagnostics: vec![Diagnostic {
+                severity: Severity::Error,
+                code: "PACK_MANIFEST_MISSING".to_string(),
+                message: "Pack manifest could not be decoded for validation.".to_string(),
+                path: Some("manifest.cbor".to_string()),
+                hint: Some("Rebuild the pack to regenerate manifest.cbor.".to_string()),
+                data: Value::Null,
+            }],
+        }
+    }
+}
+
+fn print_validation(report: &ValidationReport) {
+    let (info, warn, error) = validation_counts(report);
+    println!("Validation:");
+    println!("  Info: {info} Warn: {warn} Error: {error}");
+    if report.diagnostics.is_empty() {
+        println!("  - none");
+        return;
+    }
+    for diag in &report.diagnostics {
+        let sev = match diag.severity {
+            Severity::Info => "INFO",
+            Severity::Warn => "WARN",
+            Severity::Error => "ERROR",
+        };
+        if let Some(path) = diag.path.as_deref() {
+            println!("  - [{sev}] {} {} - {}", diag.code, path, diag.message);
+        } else {
+            println!("  - [{sev}] {} - {}", diag.code, diag.message);
+        }
+        if let Some(hint) = diag.hint.as_deref() {
+            println!("    hint: {hint}");
+        }
+    }
+}
+
+fn validation_counts(report: &ValidationReport) -> (usize, usize, usize) {
+    let mut info = 0;
+    let mut warn = 0;
+    let mut error = 0;
+    for diag in &report.diagnostics {
+        match diag.severity {
+            Severity::Info => info += 1,
+            Severity::Warn => warn += 1,
+            Severity::Error => error += 1,
+        }
+    }
+    (info, warn, error)
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum InspectFormat {
+    Human,
+    Json,
+}
+
+fn resolve_format(args: &InspectArgs, json: bool) -> InspectFormat {
+    if json {
+        InspectFormat::Json
+    } else {
+        args.format
     }
 }
 

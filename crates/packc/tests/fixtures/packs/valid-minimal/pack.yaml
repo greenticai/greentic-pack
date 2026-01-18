@@ -1,0 +1,27 @@
+pack_id: dev.local.valid-minimal
+version: 0.1.0
+kind: application
+publisher: Test
+
+components:
+  - id: "dev.local.component"
+    version: "0.1.0"
+    world: "greentic:component/component@0.5.0"
+    supports: ["messaging"]
+    profiles:
+      default: "stateless"
+      supported: ["stateless"]
+    capabilities:
+      wasi: {}
+      host: {}
+    operations:
+      - name: "handle_message"
+        input_schema: {}
+        output_schema: {}
+    wasm: "components/fixture.wasm"
+
+flows:
+  - id: main
+    file: flows/main.ygtc
+    tags: [default]
+    entrypoints: [main]
