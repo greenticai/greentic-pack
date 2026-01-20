@@ -129,12 +129,16 @@ jobs:
           cargo build --release --target ${{ matrix.target }} --package greentic-pack --bin greentic-pack
           out_dir="target/${{ matrix.target }}/release"
           mkdir -p dist
-          tar -czf "dist/greentic-pack-${{ matrix.target }}.tgz" -C "${out_dir}" greentic-pack
+          if [[ "${{ matrix.target }}" == *"windows-msvc" ]]; then
+            powershell.exe -NoProfile -Command "Compress-Archive -Path '${out_dir}/greentic-pack.exe' -DestinationPath 'dist/greentic-pack-${{ matrix.target }}.zip' -Force"
+          else
+            tar -czf "dist/greentic-pack-${{ matrix.target }}.tgz" -C "${out_dir}" greentic-pack
+          fi
       - name: Upload binstall artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/greentic-pack-${{ matrix.target }}.tgz
+            dist/greentic-pack-${{ matrix.target }}.*
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TITLE }}
           target_commitish: ${{ github.sha }}
