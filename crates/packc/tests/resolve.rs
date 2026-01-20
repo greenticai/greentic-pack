@@ -272,3 +272,72 @@ fn resolve_local_file_uri_paths_relative_to_flow() {
             .starts_with("sha256:")
     );
 }
+
+#[test]
+fn resolve_falls_back_when_manifest_artifact_mismatch() {
+    let temp = TempDir::new().expect("temp dir");
+    let pack_dir = temp.path().to_path_buf();
+
+    let flows_dir = pack_dir.join("flows");
+    fs::create_dir_all(&flows_dir).unwrap();
+    let flow_path = flows_dir.join("main.ygtc");
+    fs::write(&flow_path, "id: main\nentry: start\n").unwrap();
+
+    let wasm_path = pack_dir.join("components").join("demo.wasm");
+    fs::create_dir_all(wasm_path.parent().unwrap()).unwrap();
+    fs::write(&wasm_path, b"wasm-bytes").unwrap();
+
+    let sidecar = serde_json::json!({
+        "schema_version": 1,
+        "flow": "main.ygtc",
+        "nodes": {
+            "call": {
+                "source": {
+                    "kind": "local",
+                    "path": "../components/demo.wasm"
+                }
+            }
+        }
+    });
+    fs::write(
+        flow_path.with_extension("ygtc.resolve.json"),
+        serde_json::to_vec_pretty(&sidecar).unwrap(),
+    )
+    .unwrap();
+
+    let manifest = serde_json::json!({
+        "id": "ai.greentic.demo-comp",
+        "version": "0.1.0",
+        "world": "greentic:component/component@0.5.0",
+        "artifacts": {
+            "component_wasm": "component.wasm"
+        }
+    });
+    fs::write(
+        pack_dir.join("component.manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let pack_yaml = r#"pack_id: demo.pack
+version: 0.1.0
+kind: application
+publisher: demo
+flows:
+  - id: main
+    file: flows/main.ygtc
+"#;
+    fs::write(pack_dir.join("pack.yaml"), pack_yaml).unwrap();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .current_dir(workspace_root())
+        .args([
+            "resolve",
+            "--in",
+            pack_dir.to_str().unwrap(),
+            "--log",
+            "warn",
+        ])
+        .assert()
+        .success();
+}

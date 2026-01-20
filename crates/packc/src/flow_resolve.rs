@@ -6,14 +6,20 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use greentic_flow::resolve_summary::write_flow_resolve_summary_for_flow;
+use greentic_types::ComponentId;
 use greentic_types::Flow;
 use greentic_types::error::ErrorCode;
 use greentic_types::flow_resolve::{
-    FlowResolveV1, read_flow_resolve, sidecar_path_for_flow, write_flow_resolve,
+    ComponentSourceRefV1, FlowResolveV1, read_flow_resolve, sidecar_path_for_flow,
+    write_flow_resolve,
 };
 use greentic_types::flow_resolve_summary::{
-    FlowResolveSummaryV1, read_flow_resolve_summary, resolve_summary_path_for_flow,
+    FLOW_RESOLVE_SUMMARY_SCHEMA_VERSION, FlowResolveSummaryManifestV1,
+    FlowResolveSummarySourceRefV1, FlowResolveSummaryV1, NodeResolveSummaryV1,
+    read_flow_resolve_summary, resolve_summary_path_for_flow, write_flow_resolve_summary,
 };
+use semver::Version;
+use sha2::{Digest, Sha256};
 
 use crate::config::FlowConfig;
 
@@ -237,7 +243,7 @@ fn read_or_write_flow_resolve_summary(
 }
 
 fn write_flow_resolve_summary_safe(flow_path: &Path, sidecar: &FlowResolveV1) -> Result<PathBuf> {
-    if tokio::runtime::Handle::try_current().is_ok() {
+    let result = if tokio::runtime::Handle::try_current().is_ok() {
         let flow_path = flow_path.to_path_buf();
         let sidecar = sidecar.clone();
         let join =
@@ -246,6 +252,24 @@ fn write_flow_resolve_summary_safe(flow_path: &Path, sidecar: &FlowResolveV1) ->
             .map_err(|_| anyhow!("flow resolve summary generation panicked"))?
     } else {
         write_flow_resolve_summary_for_flow(flow_path, sidecar)
+    };
+
+    match result {
+        Ok(path) => Ok(path),
+        Err(err) => {
+            if sidecar
+                .nodes
+                .values()
+                .all(|node| matches!(node.source, ComponentSourceRefV1::Local { .. }))
+            {
+                let summary = build_flow_resolve_summary_fallback(flow_path, sidecar)?;
+                let summary_path = resolve_summary_path_for_flow(flow_path);
+                write_flow_resolve_summary(&summary_path, &summary)
+                    .map_err(|e| anyhow!(e.to_string()))?;
+                return Ok(summary_path);
+            }
+            Err(err)
+        }
     }
 }
 
@@ -280,4 +304,168 @@ fn missing_summary_node_mappings(flow: &Flow, doc: &FlowResolveSummaryV1) -> Vec
             }
         })
         .collect()
+}
+
+fn build_flow_resolve_summary_fallback(
+    flow_path: &Path,
+    sidecar: &FlowResolveV1,
+) -> Result<FlowResolveSummaryV1> {
+    let mut nodes = BTreeMap::new();
+    for (node_id, entry) in &sidecar.nodes {
+        let summary = summarize_node_fallback(flow_path, node_id, &entry.source)?;
+        nodes.insert(node_id.clone(), summary);
+    }
+    Ok(FlowResolveSummaryV1 {
+        schema_version: FLOW_RESOLVE_SUMMARY_SCHEMA_VERSION,
+        flow: flow_name_from_path(flow_path),
+        nodes,
+    })
+}
+
+fn summarize_node_fallback(
+    flow_path: &Path,
+    node_id: &str,
+    source: &ComponentSourceRefV1,
+) -> Result<NodeResolveSummaryV1> {
+    let ComponentSourceRefV1::Local { path, .. } = source else {
+        anyhow::bail!(
+            "flow resolve fallback only supports local sources (node {})",
+            node_id
+        );
+    };
+    let source_ref = FlowResolveSummarySourceRefV1::Local {
+        path: strip_file_prefix(path),
+    };
+    let wasm_path = local_path_from_sidecar(path, flow_path);
+    let digest = compute_sha256(&wasm_path)?;
+    let manifest_path = find_manifest_for_wasm_loose(&wasm_path).with_context(|| {
+        format!(
+            "component.manifest.json not found for node '{}' ({})",
+            node_id,
+            wasm_path.display()
+        )
+    })?;
+    let (component_id, manifest) = read_manifest_metadata(&manifest_path).with_context(|| {
+        format!(
+            "failed to read component.manifest.json for node '{}' ({})",
+            node_id,
+            manifest_path.display()
+        )
+    })?;
+
+    Ok(NodeResolveSummaryV1 {
+        component_id,
+        source: source_ref,
+        digest,
+        manifest,
+    })
+}
+
+fn find_manifest_for_wasm_loose(wasm_path: &Path) -> Result<PathBuf> {
+    let wasm_abs = fs::canonicalize(wasm_path)
+        .with_context(|| format!("resolve wasm path {}", wasm_path.display()))?;
+    let mut current = wasm_abs.parent();
+    let mut fallback = None;
+    while let Some(dir) = current {
+        let candidate = dir.join("component.manifest.json");
+        if candidate.exists() {
+            if manifest_matches_wasm_loose(&candidate, &wasm_abs)? {
+                return Ok(candidate);
+            }
+            if fallback.is_none() {
+                fallback = Some(candidate);
+            }
+        }
+        current = dir.parent();
+    }
+
+    if let Some(candidate) = fallback {
+        return Ok(candidate);
+    }
+
+    anyhow::bail!(
+        "component.manifest.json not found for wasm {}",
+        wasm_abs.display()
+    );
+}
+
+fn manifest_matches_wasm_loose(manifest_path: &Path, wasm_abs: &Path) -> Result<bool> {
+    let raw = fs::read_to_string(manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).context("parse component.manifest.json")?;
+    let Some(rel) = json
+        .get("artifacts")
+        .and_then(|v| v.get("component_wasm"))
+        .and_then(|v| v.as_str())
+    else {
+        return Ok(false);
+    };
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("manifest path {} has no parent", manifest_path.display()))?;
+    let Ok(abs) = fs::canonicalize(manifest_dir.join(rel)) else {
+        return Ok(false);
+    };
+    Ok(abs == *wasm_abs)
+}
+
+fn read_manifest_metadata(
+    manifest_path: &Path,
+) -> Result<(ComponentId, Option<FlowResolveSummaryManifestV1>)> {
+    let raw = fs::read_to_string(manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).context("parse component.manifest.json")?;
+    let id = json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("manifest missing id"))?;
+    let component_id =
+        ComponentId::new(id).with_context(|| format!("invalid component id {}", id))?;
+    let world = json.get("world").and_then(|v| v.as_str());
+    let version = json.get("version").and_then(|v| v.as_str());
+    let manifest = match (world, version) {
+        (Some(world), Some(version)) => {
+            let parsed = Version::parse(version)
+                .with_context(|| format!("invalid semver version {}", version))?;
+            Some(FlowResolveSummaryManifestV1 {
+                world: world.to_string(),
+                version: parsed,
+            })
+        }
+        _ => None,
+    };
+    Ok((component_id, manifest))
+}
+
+fn flow_name_from_path(flow_path: &Path) -> String {
+    flow_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "flow.ygtc".to_string())
+}
+
+fn strip_file_prefix(path: &str) -> String {
+    path.strip_prefix("file://").unwrap_or(path).to_string()
+}
+
+fn local_path_from_sidecar(path: &str, flow_path: &Path) -> PathBuf {
+    let trimmed = path.strip_prefix("file://").unwrap_or(path);
+    let raw = PathBuf::from(trimmed);
+    if raw.is_absolute() {
+        raw
+    } else {
+        flow_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(raw)
+    }
+}
+
+fn compute_sha256(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("read wasm at {}", path.display()))?;
+    let mut sha = Sha256::new();
+    sha.update(bytes);
+    Ok(format!("sha256:{:x}", sha.finalize()))
 }
