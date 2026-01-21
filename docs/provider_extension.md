@@ -34,6 +34,17 @@ Validation checks that:
 
 Other extension kinds are accepted without additional shape validation.
 
+## Validator references
+
+Providers can optionally point to a validator pack/component:
+
+- `validator_ref`: a pack/component reference (path or `oci://...`).
+- `validator_digest`: optional digest for the validator ref (required in strict mode).
+
+Validator packs built with `greentic-pack build` may embed the validator Wasm at
+`components/<id>.wasm`; validator loading accepts both `components/<id>.wasm`
+and `components/<id>@<version>/component.wasm`.
+
 ## Strict pinning
 
 Set `GREENTIC_PACK_STRICT_EXTENSIONS=1` to enforce deterministic pinning:

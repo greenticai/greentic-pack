@@ -493,18 +493,24 @@ fn load_validator_components_from_pack(path: &Path) -> Result<Vec<ValidatorCompo
             {
                 continue;
             }
-            let wasm_path = format!(
-                "components/{}@{}/component.wasm",
-                component.id.as_str(),
-                component.version
-            );
-            let Some(wasm) = load.files.get(&wasm_path).cloned() else {
-                return Err(anyhow!(
-                    "validator pack missing {} for component {}",
-                    wasm_path,
-                    component.id.as_str()
-                ));
-            };
+            let wasm_paths = [
+                format!(
+                    "components/{}@{}/component.wasm",
+                    component.id.as_str(),
+                    component.version
+                ),
+                format!("components/{}.wasm", component.id.as_str()),
+            ];
+            let wasm = wasm_paths
+                .iter()
+                .find_map(|path| load.files.get(path).cloned())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "validator pack missing {} for component {}",
+                        wasm_paths.join(" or "),
+                        component.id.as_str()
+                    )
+                })?;
             components.push(ValidatorComponent {
                 component_id: component.id.as_str().to_string(),
                 wasm,
@@ -641,5 +647,106 @@ impl WasiView for ValidatorCtx {
             table: &mut self.table,
             ctx: &mut self.wasi,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use greentic_pack::builder::SbomEntry;
+    use greentic_types::{
+        ComponentCapabilities, ComponentId, ComponentManifest, ComponentProfiles, PackId, PackKind,
+        PackManifest, PackSignatures, ResourceHints, encode_pack_manifest,
+    };
+    use semver::Version;
+    use serde::Serialize;
+    use std::collections::BTreeMap;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+    use zip::write::FileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    #[derive(Serialize)]
+    struct SbomDocument {
+        format: String,
+        files: Vec<SbomEntry>,
+    }
+
+    #[test]
+    fn validator_pack_accepts_id_wasm_from_pack_manifest() {
+        let temp = tempdir().expect("temp dir");
+        let pack_path = temp.path().join("validator.gtpack");
+        let component_id = ComponentId::new("messaging-validator").expect("component id");
+        let component_version = Version::parse("0.1.0").expect("component version");
+        let component = ComponentManifest {
+            id: component_id.clone(),
+            version: component_version.clone(),
+            supports: Vec::new(),
+            world: PACK_VALIDATOR_WORLDS[0].to_string(),
+            profiles: ComponentProfiles::default(),
+            capabilities: ComponentCapabilities::default(),
+            configurators: None,
+            operations: Vec::new(),
+            config_schema: None,
+            resources: ResourceHints::default(),
+            dev_flows: BTreeMap::new(),
+        };
+        let manifest = PackManifest {
+            schema_version: "pack-v1".to_string(),
+            pack_id: PackId::new("dev.local.validator").expect("pack id"),
+            version: component_version,
+            kind: PackKind::Provider,
+            publisher: "test".to_string(),
+            components: vec![component],
+            flows: Vec::new(),
+            dependencies: Vec::new(),
+            capabilities: Vec::new(),
+            secret_requirements: Vec::new(),
+            signatures: PackSignatures::default(),
+            bootstrap: None,
+            extensions: None,
+        };
+        let manifest_cbor = encode_pack_manifest(&manifest).expect("encode manifest");
+        let wasm_bytes = b"validator wasm";
+        let wasm_path = format!("components/{}.wasm", component_id.as_str());
+        let sbom_entries = vec![
+            SbomEntry {
+                path: "manifest.cbor".to_string(),
+                size: manifest_cbor.len() as u64,
+                hash_blake3: blake3::hash(&manifest_cbor).to_hex().to_string(),
+                media_type: "application/cbor".to_string(),
+            },
+            SbomEntry {
+                path: wasm_path.clone(),
+                size: wasm_bytes.len() as u64,
+                hash_blake3: blake3::hash(wasm_bytes).to_hex().to_string(),
+                media_type: "application/wasm".to_string(),
+            },
+        ];
+        let sbom = SbomDocument {
+            format: "greentic-sbom-v1".to_string(),
+            files: sbom_entries,
+        };
+        let sbom_cbor = serde_cbor::to_vec(&sbom).expect("encode sbom");
+
+        let file = File::create(&pack_path).expect("create pack");
+        let mut writer = ZipWriter::new(file);
+        let options = FileOptions::<()>::default().compression_method(CompressionMethod::Stored);
+        writer
+            .start_file("manifest.cbor", options)
+            .expect("start manifest");
+        writer.write_all(&manifest_cbor).expect("write manifest");
+        writer.start_file(&wasm_path, options).expect("start wasm");
+        writer.write_all(wasm_bytes).expect("write wasm");
+        writer.start_file("sbom.cbor", options).expect("start sbom");
+        writer.write_all(&sbom_cbor).expect("write sbom");
+        writer.finish().expect("finish pack");
+
+        let components =
+            load_validator_components_from_pack(&pack_path).expect("load validator components");
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].component_id, "messaging-validator");
+        assert_eq!(components[0].wasm, wasm_bytes);
     }
 }
