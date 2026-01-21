@@ -212,6 +212,7 @@ async fn inspect_source_dir(
         default_secret_scope: None,
         allow_oci_tags,
         require_component_manifests: false,
+        no_extra_dirs: false,
         runtime: runtime.clone(),
         skip_update: false,
     };

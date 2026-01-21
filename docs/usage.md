@@ -68,11 +68,16 @@ Usage: packc build --in <DIR> [--out <FILE>] [--manifest <FILE>]
 - `--offline` – hard-disable any network activity (highest precedence; also see `GREENTIC_PACK_OFFLINE`).
 - `--cache-dir` – override the packc cache root (default: `<pack_dir>/.packc/`; env: `GREENTIC_PACK_CACHE_DIR`).
 - `--no-update` – skip the automatic `packc update` that normally runs before a build.
+- `--no-extra-dirs` – only bundle `flows/`, `components/`, and `assets/` (skip other top-level dirs).
 
 When a component’s `wasm` path points to a directory, `packc build` only
 packages runtime artifacts: the resolved Wasm (`*.component.wasm` preferred)
 and the component manifest (`component.json` converted to CBOR). Source files
 (README, src/, tmp/, etc.) are deliberately excluded from the `.gtpack`.
+
+By default, `packc build` also bundles additional top-level directories like
+`schemas/` or `templates/` into the archive and SBOM. Pass `--no-extra-dirs` to
+keep the archive limited to the standard pack outputs.
 
 `packc` writes structured progress logs to stderr. When invoking inside CI, pass
 `--dry-run` to skip Wasm compilation if the target toolchain is unavailable.

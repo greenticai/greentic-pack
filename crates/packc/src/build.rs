@@ -39,6 +39,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tracing::info;
+use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -70,6 +71,7 @@ pub struct BuildOptions {
     pub default_secret_scope: Option<String>,
     pub allow_oci_tags: bool,
     pub require_component_manifests: bool,
+    pub no_extra_dirs: bool,
     pub runtime: RuntimeContext,
     pub skip_update: bool,
 }
@@ -121,6 +123,7 @@ impl BuildOptions {
             default_secret_scope: args.default_secret_scope,
             allow_oci_tags: args.allow_oci_tags,
             require_component_manifests: args.require_component_manifests,
+            no_extra_dirs: args.no_extra_dirs,
             runtime: runtime.clone(),
             skip_update: args.no_update,
         })
@@ -184,7 +187,12 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
         )
     })?;
 
-    let mut build = assemble_manifest(&config, &opts.pack_dir, &secret_requirements)?;
+    let mut build = assemble_manifest(
+        &config,
+        &opts.pack_dir,
+        &secret_requirements,
+        !opts.no_extra_dirs,
+    )?;
     build.lock_components =
         collect_lock_component_artifacts(&mut pack_lock, &opts.runtime, opts.bundle, opts.dry_run)
             .await?;
@@ -259,6 +267,7 @@ struct BuildProducts {
     component_manifest_files: Vec<ComponentManifestFile>,
     flow_files: Vec<FlowFile>,
     assets: Vec<AssetFile>,
+    extra_files: Vec<ExtraFile>,
 }
 
 #[derive(Clone)]
@@ -289,6 +298,11 @@ struct AssetFile {
     source: PathBuf,
 }
 
+struct ExtraFile {
+    logical_path: String,
+    source: PathBuf,
+}
+
 #[derive(Clone)]
 struct FlowFile {
     logical_path: String,
@@ -300,11 +314,17 @@ fn assemble_manifest(
     config: &PackConfig,
     pack_root: &Path,
     secret_requirements: &[SecretRequirement],
+    include_extra_dirs: bool,
 ) -> Result<BuildProducts> {
     let components = build_components(&config.components)?;
     let (flows, flow_files) = build_flows(&config.flows, pack_root)?;
     let dependencies = build_dependencies(&config.dependencies)?;
     let assets = collect_assets(&config.assets, pack_root)?;
+    let extra_files = if include_extra_dirs {
+        collect_extra_dir_files(pack_root)?
+    } else {
+        Vec::new()
+    };
     let component_manifests: Vec<_> = components.iter().map(|c| c.0.clone()).collect();
     let bootstrap = build_bootstrap(config, &flows, &component_manifests)?;
     let extensions = normalize_extensions(&config.extensions);
@@ -333,6 +353,7 @@ fn assemble_manifest(
         component_manifest_files: Vec::new(),
         flow_files,
         assets,
+        extra_files,
     })
 }
 
@@ -785,6 +806,63 @@ fn collect_assets(configs: &[AssetConfig], pack_root: &Path) -> Result<Vec<Asset
     Ok(assets)
 }
 
+fn collect_extra_dir_files(pack_root: &Path) -> Result<Vec<ExtraFile>> {
+    let excluded = [
+        "components",
+        "flows",
+        "assets",
+        "dist",
+        "target",
+        ".git",
+        ".github",
+        ".idea",
+        ".vscode",
+        "node_modules",
+    ];
+    let mut entries = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in fs::read_dir(pack_root)
+        .with_context(|| format!("failed to list pack root {}", pack_root.display()))?
+    {
+        let entry = entry?;
+        let entry_type = entry.file_type()?;
+        if !entry_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || excluded.contains(&name.as_ref()) {
+            continue;
+        }
+        let root = entry.path();
+        for sub in WalkDir::new(&root)
+            .into_iter()
+            .filter_entry(|walk| !walk.file_name().to_string_lossy().starts_with('.'))
+            .filter_map(Result::ok)
+        {
+            if !sub.file_type().is_file() {
+                continue;
+            }
+            let logical = sub
+                .path()
+                .strip_prefix(pack_root)
+                .unwrap_or(sub.path())
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            if logical.is_empty() || !seen.insert(logical.clone()) {
+                continue;
+            }
+            entries.push(ExtraFile {
+                logical_path: logical,
+                source: sub.path().to_path_buf(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
 fn normalize_extensions(
     extensions: &Option<BTreeMap<String, greentic_types::ExtensionRef>>,
 ) -> Option<BTreeMap<String, greentic_types::ExtensionRef>> {
@@ -1133,6 +1211,27 @@ fn package_gtpack(
             );
             write_zip_entry(&mut writer, &logical, &bytes, options)?;
         }
+    }
+
+    let mut extra_entries: Vec<_> = build
+        .extra_files
+        .iter()
+        .map(|e| (e.logical_path.clone(), e.source.clone()))
+        .collect();
+    extra_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (logical, source) in extra_entries {
+        if !written_paths.insert(logical.clone()) {
+            continue;
+        }
+        let bytes = fs::read(&source)
+            .with_context(|| format!("failed to read extra file {}", source.display()))?;
+        record_sbom_entry(
+            &mut sbom_entries,
+            &logical,
+            &bytes,
+            "application/octet-stream",
+        );
+        write_zip_entry(&mut writer, &logical, &bytes, options)?;
     }
 
     sbom_entries.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1756,6 +1855,7 @@ mod tests {
     use greentic_types::flow::FlowKind;
     use serde_json::json;
     use sha2::{Digest, Sha256};
+    use std::collections::BTreeSet;
     use std::fs::File;
     use std::io::Read;
     use std::{fs, path::PathBuf};
@@ -1785,6 +1885,31 @@ mod tests {
         }];
         let collected = collect_assets(&assets, &root).expect("collect assets");
         assert_eq!(collected[0].logical_path, "assets/foo.txt");
+    }
+
+    #[test]
+    fn collect_extra_dir_files_skips_hidden_and_known_dirs() {
+        let temp = tempdir().expect("temp dir");
+        let root = temp.path();
+        fs::create_dir_all(root.join("schemas")).expect("schemas dir");
+        fs::create_dir_all(root.join("schemas").join(".nested")).expect("nested hidden dir");
+        fs::create_dir_all(root.join(".hidden")).expect("hidden dir");
+        fs::create_dir_all(root.join("assets")).expect("assets dir");
+        fs::write(root.join("schemas").join("config.schema.json"), b"{}").expect("schema file");
+        fs::write(
+            root.join("schemas").join(".nested").join("skip.json"),
+            b"{}",
+        )
+        .expect("nested hidden file");
+        fs::write(root.join(".hidden").join("secret.txt"), b"nope").expect("hidden file");
+        fs::write(root.join("assets").join("asset.txt"), b"nope").expect("asset file");
+
+        let collected = collect_extra_dir_files(root).expect("collect extra dirs");
+        let paths: BTreeSet<_> = collected.iter().map(|e| e.logical_path.as_str()).collect();
+        assert!(paths.contains("schemas/config.schema.json"));
+        assert!(!paths.contains("schemas/.nested/skip.json"));
+        assert!(!paths.contains(".hidden/secret.txt"));
+        assert!(!paths.iter().any(|path| path.starts_with("assets/")));
     }
 
     #[test]
@@ -1891,6 +2016,7 @@ mod tests {
             component_manifest_files: Vec::new(),
             flow_files: Vec::new(),
             assets: Vec::new(),
+            extra_files: Vec::new(),
         };
 
         let out = temp.path().join("demo.gtpack");
@@ -2164,6 +2290,7 @@ flows:
                 default_secret_scope: None,
                 allow_oci_tags: false,
                 require_component_manifests: false,
+                no_extra_dirs: false,
                 runtime,
                 skip_update: false,
             };
@@ -2284,6 +2411,7 @@ flows:
                 default_secret_scope: None,
                 allow_oci_tags: false,
                 require_component_manifests: false,
+                no_extra_dirs: false,
                 runtime,
                 skip_update: false,
             };

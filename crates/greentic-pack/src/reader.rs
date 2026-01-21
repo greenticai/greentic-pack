@@ -681,7 +681,7 @@ fn verify_ed25519_signature(
 
 fn extract_ed25519_key(cert: &X509Certificate<'_>) -> Result<VerifyingKey> {
     let spki = cert.public_key();
-    let key_bytes = spki.subject_public_key.data.as_ref();
+    let key_bytes: &[u8] = spki.subject_public_key.data.as_ref();
     if key_bytes.len() != 32 {
         bail!(
             "expected 32-byte Ed25519 public key, found {} bytes",

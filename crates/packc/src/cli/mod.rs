@@ -138,6 +138,10 @@ pub struct BuildArgs {
     /// Require manifest metadata for flow-referenced components
     #[arg(long, default_value_t = false)]
     pub require_component_manifests: bool,
+
+    /// Skip auto-including extra directories (e.g. schemas/, templates/)
+    #[arg(long = "no-extra-dirs", default_value_t = false)]
+    pub no_extra_dirs: bool,
 }
 
 pub fn run() -> Result<()> {
