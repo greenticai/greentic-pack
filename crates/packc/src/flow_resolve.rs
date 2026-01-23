@@ -334,7 +334,7 @@ fn summarize_node_fallback(
         );
     };
     let source_ref = FlowResolveSummarySourceRefV1::Local {
-        path: strip_file_prefix(path),
+        path: strip_file_uri_prefix(path).to_string(),
     };
     let wasm_path = local_path_from_sidecar(path, flow_path);
     let digest = compute_sha256(&wasm_path)?;
@@ -404,7 +404,8 @@ fn manifest_matches_wasm_loose(manifest_path: &Path, wasm_abs: &Path) -> Result<
     let manifest_dir = manifest_path
         .parent()
         .ok_or_else(|| anyhow!("manifest path {} has no parent", manifest_path.display()))?;
-    let Ok(abs) = fs::canonicalize(manifest_dir.join(rel)) else {
+    let sanitized = strip_file_uri_prefix(rel);
+    let Ok(abs) = fs::canonicalize(manifest_dir.join(sanitized)) else {
         return Ok(false);
     };
     Ok(abs == *wasm_abs)
@@ -446,12 +447,15 @@ fn flow_name_from_path(flow_path: &Path) -> String {
         .unwrap_or_else(|| "flow.ygtc".to_string())
 }
 
-fn strip_file_prefix(path: &str) -> String {
-    path.strip_prefix("file://").unwrap_or(path).to_string()
+pub(crate) fn strip_file_uri_prefix(path: &str) -> &str {
+    path.strip_prefix("file://")
+        .or_else(|| path.strip_prefix("file:/"))
+        .or_else(|| path.strip_prefix("file:"))
+        .unwrap_or(path)
 }
 
 fn local_path_from_sidecar(path: &str, flow_path: &Path) -> PathBuf {
-    let trimmed = path.strip_prefix("file://").unwrap_or(path);
+    let trimmed = strip_file_uri_prefix(path);
     let raw = PathBuf::from(trimmed);
     if raw.is_absolute() {
         raw
@@ -468,4 +472,86 @@ fn compute_sha256(path: &Path) -> Result<String> {
     let mut sha = Sha256::new();
     sha.update(bytes);
     Ok(format!("sha256:{:x}", sha.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn strip_file_uri_prefix_removes_scheme_variants() {
+        assert_eq!(strip_file_uri_prefix("file:///tmp/foo"), "/tmp/foo");
+        assert_eq!(strip_file_uri_prefix("file:/tmp/foo"), "tmp/foo");
+        assert_eq!(strip_file_uri_prefix("file://bar/baz"), "bar/baz");
+        assert_eq!(strip_file_uri_prefix("file:relative/path"), "relative/path");
+        assert_eq!(
+            strip_file_uri_prefix("../components/foo"),
+            "../components/foo"
+        );
+    }
+
+    #[test]
+    fn manifest_matches_wasm_loose_handles_relative_file_uri_paths() {
+        let temp = tempdir().expect("alloc temp dir");
+        let components = temp.path().join("components");
+        fs::create_dir_all(&components).expect("create components dir");
+        let wasm_path = components.join("component.wasm");
+        fs::write(&wasm_path, b"wasm-bytes").expect("write wasm");
+        let manifest_path = components.join("component.manifest.json");
+        let manifest = json!({
+            "artifacts": {
+                "component_wasm": "file://component.wasm"
+            }
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("encode manifest"),
+        )
+        .expect("write manifest");
+        let wasm_abs = fs::canonicalize(&wasm_path).expect("canonicalize wasm");
+        assert!(manifest_matches_wasm_loose(&manifest_path, &wasm_abs).expect("manifest lookup"));
+
+        let parent_manifest = json!({
+            "artifacts": {
+                "component_wasm": "file://../component.wasm"
+            }
+        });
+        let parent_dir = components.join("child");
+        fs::create_dir_all(&parent_dir).expect("create child dir");
+        let child_manifest_path = parent_dir.join("component.manifest.json");
+        fs::write(
+            &child_manifest_path,
+            serde_json::to_vec_pretty(&parent_manifest).unwrap(),
+        )
+        .expect("write child manifest");
+        assert!(
+            manifest_matches_wasm_loose(&child_manifest_path, &wasm_abs)
+                .expect("manifest matches child")
+        );
+    }
+
+    #[test]
+    fn manifest_matches_wasm_loose_handles_absolute_file_uri_paths() {
+        let temp = tempdir().expect("alloc temp dir");
+        let components = temp.path().join("components");
+        fs::create_dir_all(&components).expect("create components dir");
+        let wasm_path = components.join("component.wasm");
+        fs::write(&wasm_path, b"bytes").expect("write wasm");
+        let wasm_abs = fs::canonicalize(&wasm_path).expect("canonicalize wasm");
+        let manifest_path = components.join("component.manifest.json");
+        let manifest = json!({
+            "artifacts": {
+                "component_wasm": format!("file://{}", wasm_abs.display())
+            }
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("encode manifest"),
+        )
+        .expect("write manifest");
+        assert!(manifest_matches_wasm_loose(&manifest_path, &wasm_abs).expect("manifest lookup"));
+    }
 }

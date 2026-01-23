@@ -10,7 +10,7 @@ use greentic_types::ComponentId;
 use greentic_types::flow_resolve_summary::{FlowResolveSummarySourceRefV1, FlowResolveSummaryV1};
 
 use crate::config::load_pack_config;
-use crate::flow_resolve::read_flow_resolve_summary_for_flow;
+use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
 use crate::runtime::RuntimeContext;
 
 #[derive(Debug, Args)]
@@ -113,7 +113,7 @@ fn normalize_local(
     let parent = flow_path
         .parent()
         .ok_or_else(|| anyhow!("flow path {} has no parent", flow_path.display()))?;
-    let rel = rel.strip_prefix("file://").unwrap_or(rel);
+    let rel = strip_file_uri_prefix(rel);
     Ok(parent.join(rel))
 }
 

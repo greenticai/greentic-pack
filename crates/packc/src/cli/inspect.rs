@@ -22,6 +22,7 @@ use greentic_types::pack_manifest::PackManifest;
 use greentic_types::provider::ProviderDecl;
 use greentic_types::validate::{Diagnostic, Severity, ValidationReport};
 use serde::Serialize;
+use serde_cbor;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -294,14 +295,7 @@ fn run_component_doctors(load: &PackLoad, diagnostics: &mut Vec<Diagnostic>) -> 
         };
 
         let Some(manifest_bytes) = manifest_bytes else {
-            diagnostics.push(Diagnostic {
-                severity: Severity::Warn,
-                code: "PACK_COMPONENT_DOCTOR_MISSING_MANIFEST".to_string(),
-                message: "component manifest missing; skipping component doctor".to_string(),
-                path: component.manifest_file.clone(),
-                hint: Some("rebuild the pack to include component manifests".to_string()),
-                data: Value::Null,
-            });
+            diagnostics.push(component_manifest_missing_diag(&component.manifest_file));
             continue;
         };
 
@@ -309,6 +303,29 @@ fn run_component_doctors(load: &PackLoad, diagnostics: &mut Vec<Diagnostic>) -> 
         fs::create_dir_all(&component_dir)
             .with_context(|| format!("create temp dir for {}", component.name))?;
         let wasm_path = component_dir.join("component.wasm");
+        let manifest_value = match serde_json::from_slice::<Value>(&manifest_bytes) {
+            Ok(value) => value,
+            Err(_) => match serde_cbor::from_slice::<Value>(&manifest_bytes) {
+                Ok(value) => value,
+                Err(err) => {
+                    diagnostics.push(component_manifest_missing_diag(&component.manifest_file));
+                    tracing::debug!(
+                        manifest = %component.name,
+                        "failed to parse component manifest for doctor: {err}"
+                    );
+                    continue;
+                }
+            },
+        };
+
+        if !component_manifest_has_required_fields(&manifest_value) {
+            diagnostics.push(component_manifest_missing_diag(&component.manifest_file));
+            continue;
+        }
+
+        let manifest_bytes =
+            serde_json::to_vec_pretty(&manifest_value).context("serialize component manifest")?;
+
         let manifest_path = component_dir.join("component.manifest.json");
         fs::write(&wasm_path, wasm_bytes)?;
         fs::write(&manifest_path, manifest_bytes)?;
@@ -360,6 +377,25 @@ fn json_diagnostic_data(output: &std::process::Output) -> Value {
         "stdout": String::from_utf8_lossy(&output.stdout).trim_end(),
         "stderr": String::from_utf8_lossy(&output.stderr).trim_end(),
     })
+}
+
+fn component_manifest_missing_diag(manifest_file: &Option<String>) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warn,
+        code: "PACK_COMPONENT_DOCTOR_MISSING_MANIFEST".to_string(),
+        message: "component manifest missing or incomplete; skipping component doctor".to_string(),
+        path: manifest_file.clone(),
+        hint: Some("rebuild the pack to include component manifests".to_string()),
+        data: Value::Null,
+    }
+}
+
+fn component_manifest_has_required_fields(manifest: &Value) -> bool {
+    manifest.get("name").is_some()
+        && manifest.get("artifacts").is_some()
+        && manifest.get("hashes").is_some()
+        && manifest.get("describe_export").is_some()
+        && manifest.get("config_schema").is_some()
 }
 
 fn sanitize_component_id(value: &str) -> String {
