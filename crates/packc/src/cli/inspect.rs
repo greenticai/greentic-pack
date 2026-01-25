@@ -17,6 +17,9 @@ use greentic_pack::validate::{
 };
 use greentic_pack::{PackLoad, SigningPolicy, open_pack};
 use greentic_types::component_source::ComponentSourceRef;
+use greentic_types::pack::extensions::component_manifests::{
+    ComponentManifestIndexV1, EXT_COMPONENT_MANIFEST_INDEX_V1,
+};
 use greentic_types::pack::extensions::component_sources::{
     ArtifactLocationV1, ComponentSourcesV1, EXT_COMPONENT_SOURCES_V1,
 };
@@ -291,12 +294,21 @@ fn run_component_doctors(load: &PackLoad, diagnostics: &mut Vec<Diagnostic>) -> 
     let temp = TempDir::new().context("allocate temp dir for component doctor")?;
     let mut has_errors = false;
 
-    let mut manifests = std::collections::HashMap::new();
-    if let Some(gpack_manifest) = load.gpack_manifest.as_ref() {
-        for component in &gpack_manifest.components {
-            if let Ok(bytes) = serde_json::to_vec_pretty(component) {
-                manifests.insert(component.id.to_string(), bytes);
-            }
+    let mut manifest_paths = std::collections::HashMap::new();
+    if let Some(gpack_manifest) = load.gpack_manifest.as_ref()
+        && let Some(manifest_extension) = gpack_manifest
+            .extensions
+            .as_ref()
+            .and_then(|map| map.get(EXT_COMPONENT_MANIFEST_INDEX_V1))
+            .and_then(|entry| entry.inline.as_ref())
+            .and_then(|inline| match inline {
+                PackManifestExtensionInline::Other(value) => Some(value),
+                _ => None,
+            })
+            .and_then(|value| ComponentManifestIndexV1::from_extension_value(value).ok())
+    {
+        for entry in manifest_extension.entries {
+            manifest_paths.insert(entry.component_id, entry.manifest_file);
         }
     }
 
@@ -313,17 +325,19 @@ fn run_component_doctors(load: &PackLoad, diagnostics: &mut Vec<Diagnostic>) -> 
             continue;
         };
 
-        let manifest_bytes = if let Some(bytes) = manifests.get(&component.name) {
-            Some(bytes.clone())
-        } else if let Some(path) = component.manifest_file.as_deref()
+        if component.manifest_file.is_none() {
+            if manifest_paths.contains_key(&component.name) {
+                continue;
+            }
+            diagnostics.push(component_manifest_missing_diag(&component.manifest_file));
+            continue;
+        }
+
+        let manifest_bytes = if let Some(path) = component.manifest_file.as_deref()
             && let Some(bytes) = load.files.get(path)
         {
-            Some(bytes.clone())
+            bytes.clone()
         } else {
-            None
-        };
-
-        let Some(manifest_bytes) = manifest_bytes else {
             diagnostics.push(component_manifest_missing_diag(&component.manifest_file));
             continue;
         };
