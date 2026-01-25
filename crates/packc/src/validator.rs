@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -83,6 +84,13 @@ pub struct ValidatorConfig {
     pub validator_allow: Vec<String>,
     pub validator_cache_dir: PathBuf,
     pub policy: ValidatorPolicy,
+    pub local_validators: Vec<LocalValidator>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalValidator {
+    pub component_id: String,
+    pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -120,13 +128,64 @@ pub async fn run_wasm_validators(
     runtime: &RuntimeContext,
 ) -> Result<ValidatorRunResult> {
     let inputs = build_pack_inputs(load)?;
-    let refs = collect_validator_refs(load, config);
-    if refs.is_empty() {
-        return Ok(ValidatorRunResult::default());
-    }
 
     let mut result = ValidatorRunResult::default();
     let mut components = Vec::new();
+
+    for local in &config.local_validators {
+        let reference = format!("local:{}", local.path.display());
+        match fs::read(&local.path) {
+            Ok(bytes) => {
+                components.push(ValidatorComponent {
+                    component_id: local.component_id.clone(),
+                    wasm: bytes,
+                });
+                result.sources.push(ValidatorSourceReport {
+                    reference: reference.clone(),
+                    origin: "local".to_string(),
+                    status: "loaded".to_string(),
+                    message: None,
+                });
+            }
+            Err(err) => {
+                let is_required = config.policy.is_required();
+                if is_required {
+                    result.missing_required = true;
+                    result.diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: "PACK_VALIDATOR_REQUIRED".to_string(),
+                        message: format!(
+                            "Validator {} is required but could not be loaded.",
+                            reference
+                        ),
+                        path: None,
+                        hint: Some(err.to_string()),
+                        data: Value::Null,
+                    });
+                } else {
+                    result.diagnostics.push(Diagnostic {
+                        severity: Severity::Warn,
+                        code: "PACK_VALIDATOR_UNAVAILABLE".to_string(),
+                        message: format!("Validator {} could not be loaded; skipping.", reference),
+                        path: None,
+                        hint: Some(err.to_string()),
+                        data: Value::Null,
+                    });
+                }
+                result.sources.push(ValidatorSourceReport {
+                    reference,
+                    origin: "local".to_string(),
+                    status: "failed".to_string(),
+                    message: Some(err.to_string()),
+                });
+            }
+        }
+    }
+
+    let refs = collect_validator_refs(load, config);
+    if refs.is_empty() && components.is_empty() {
+        return Ok(result);
+    }
 
     for validator_ref in refs {
         match load_validator_components(&validator_ref, config, runtime).await {

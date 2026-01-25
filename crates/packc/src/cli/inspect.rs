@@ -29,7 +29,7 @@ use tempfile::TempDir;
 use crate::build;
 use crate::runtime::RuntimeContext;
 use crate::validator::{
-    DEFAULT_VALIDATOR_ALLOW, ValidatorConfig, ValidatorPolicy, run_wasm_validators,
+    DEFAULT_VALIDATOR_ALLOW, LocalValidator, ValidatorConfig, ValidatorPolicy, run_wasm_validators,
 };
 
 #[derive(Debug, Parser)]
@@ -85,6 +85,10 @@ pub struct InspectArgs {
     /// Validator pack or component reference (path or oci://...)
     #[arg(long, value_name = "REF")]
     pub validator_pack: Vec<String>,
+
+    /// Validator component wasm (format: <COMPONENT_ID>=<FILE>)
+    #[arg(long, value_name = "COMPONENT=FILE")]
+    pub validator_wasm: Vec<String>,
 
     /// Allowed OCI prefixes for validator refs
     #[arg(long, value_name = "PREFIX", default_value = DEFAULT_VALIDATOR_ALLOW)]
@@ -661,6 +665,7 @@ async fn run_pack_validation(
         validator_allow: args.validator_allow.clone(),
         validator_cache_dir: args.validator_cache_dir.clone(),
         policy: args.validator_policy,
+        local_validators: parse_validator_wasm_args(&args.validator_wasm)?,
     };
 
     let wasm_result = run_wasm_validators(load, &config, runtime).await?;
@@ -704,6 +709,35 @@ fn print_validation(report: &ValidationOutput) {
             println!("    hint: {hint}");
         }
     }
+}
+
+fn parse_validator_wasm_args(args: &[String]) -> Result<Vec<LocalValidator>> {
+    let mut local_validators = Vec::new();
+    for entry in args {
+        let mut segments = entry.splitn(2, '=');
+        let component_id = segments.next().unwrap_or_default().trim().to_string();
+        let path = segments
+            .next()
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "invalid --validator-wasm argument `{}` (expected format COMPONENT_ID=FILE)",
+                    entry
+                )
+            })?;
+        if component_id.is_empty() {
+            return Err(anyhow!(
+                "validator component id must not be empty in `{}`",
+                entry
+            ));
+        }
+        local_validators.push(LocalValidator {
+            component_id,
+            path: PathBuf::from(path),
+        });
+    }
+    Ok(local_validators)
 }
 
 fn print_doctor_failure_details(data: &Value) {

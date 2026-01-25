@@ -129,6 +129,8 @@ Options:
 - `--allow-oci-tags`: allow tag-based OCI refs in extensions.
 - `--no-flow-doctor`: disable per-flow doctor checks.
 - `--no-component-doctor`: disable per-component doctor checks.
+- `--validator-pack <REF>`: validator pack or component reference (path or `oci://`).
+- `--validator-wasm <COMPONENT_ID=FILE>`: load a local validator component binary.
 
 Example:
 
