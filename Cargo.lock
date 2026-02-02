@@ -1054,7 +1054,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1165,7 +1165,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1503,9 +1503,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "0.4.27"
+version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1af3e2f71a4200f1cd307c39f8b81b7edd13fcbbf464f2e7dc4ae17d9d6a519"
+checksum = "dd02eb7999559bd1155f4000ace6a9f5b63ed3612dc7f51243e26daf8e0cb0e3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1554,9 +1554,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.84"
+version = "0.4.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4d28ecb902408967e9ccc424e6a2b5234663e5ba85659d398e8b2e1c71b16bb"
+checksum = "bd3b74de78c8b0ba0c54f6ac05ea03c16e04d673b9bc4d967db0a1c501e34161"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1571,9 +1571,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-guest"
-version = "0.4.84"
+version = "0.4.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f555e27fd667edcb4e568dd9077570ca5dce53303ba270f4871d6e106e4d72f2"
+checksum = "312da712d7c858c6e63bc7bfbafce83bf581c41b3bb52b8704ba84254eb8205c"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1584,9 +1584,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.84"
+version = "0.4.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "287af7b8a7f1763c76cd459750f87d597f1c7afe20e438d30ee96a38950ffeaa"
+checksum = "f611ec75a111c04a294c64346b480252eb8c35906299c57c01213dbc81edb8ec"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.82"
+version = "0.4.83"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1619,7 +1619,7 @@ dependencies = [
  "predicates",
  "rand_core 0.6.4",
  "regex",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "semver",
  "serde",
  "serde_cbor",
@@ -1642,7 +1642,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack-lib"
-version = "0.4.82"
+version = "0.4.83"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1656,7 +1656,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rcgen",
  "rustls-pki-types",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "semver",
  "serde",
  "serde_cbor",
@@ -1706,7 +1706,7 @@ dependencies = [
  "greentic-types-macros",
  "indexmap 2.12.1",
  "opentelemetry-otlp",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "semver",
  "serde",
  "serde_bytes",
@@ -2491,7 +2491,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2759,7 +2759,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.82"
+version = "0.4.83"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -2769,7 +2769,7 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.82"
+version = "0.4.83"
 
 [[package]]
 name = "parking_lot"
@@ -3110,7 +3110,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3489,7 +3489,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3557,7 +3557,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3632,9 +3632,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54e910108742c57a770f492731f99be216a52fadd361b06c8fb59d74ccc267d2"
+checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
  "chrono",
  "dyn-clone",
@@ -3646,9 +3646,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4908ad288c5035a8eb12cfdf0d49270def0a268ee162b75eeee0f85d155a7c45"
+checksum = "7d115b50f4aaeea07e79c1912f645c7513d81715d0420f8bc77a18c6260b307f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3802,7 +3802,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.12.1",
  "schemars 0.9.0",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "serde_core",
  "serde_json",
  "serde_with_macros",
@@ -4018,7 +4018,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5241,7 +5241,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5859,9 +5859,9 @@ checksum = "40990edd51aae2c2b6907af74ffb635029d5788228222c4bb811e9351c0caad3"
 
 [[package]]
 name = "zmij"
-version = "1.0.18"
+version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1966f8ac2c1f76987d69a74d0e0f929241c10e78136434e3be70ff7f58f64214"
+checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
 
 [[package]]
 name = "zopfli"
