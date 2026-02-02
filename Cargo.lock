@@ -1554,9 +1554,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.86"
+version = "0.4.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd3b74de78c8b0ba0c54f6ac05ea03c16e04d673b9bc4d967db0a1c501e34161"
+checksum = "2d545e49d655be2949ec9bd9854a512290db35a9fc17fdf4b5dbeec071c980fb"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1571,9 +1571,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-guest"
-version = "0.4.86"
+version = "0.4.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "312da712d7c858c6e63bc7bfbafce83bf581c41b3bb52b8704ba84254eb8205c"
+checksum = "8c99a9141d844da83e97cdcec41ba11e6526cc9ba5fb30940a8e0632f5e3832b"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1584,9 +1584,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.86"
+version = "0.4.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f611ec75a111c04a294c64346b480252eb8c35906299c57c01213dbc81edb8ec"
+checksum = "6bbe3eefa404e10e2539cdf5eabc2cedd80f07788a4ed4e2004c87213a128774"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.83"
+version = "0.4.84"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1642,7 +1642,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack-lib"
-version = "0.4.83"
+version = "0.4.84"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1943,14 +1943,13 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "727805d60e7938b76b826a6ef209eb70eaa1812794f9424d4a4e2d740662df5f"
+checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-channel",
- "futures-core",
  "futures-util",
  "http",
  "http-body",
@@ -2759,7 +2758,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.83"
+version = "0.4.84"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -2769,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.83"
+version = "0.4.84"
 
 [[package]]
 name = "parking_lot"
