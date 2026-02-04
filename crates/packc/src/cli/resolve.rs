@@ -1,12 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, write_pack_lock};
-use greentic_types::ComponentId;
 use greentic_types::flow_resolve_summary::{FlowResolveSummarySourceRefV1, FlowResolveSummaryV1};
 
 use crate::config::load_pack_config;
@@ -62,7 +61,7 @@ fn collect_from_summary(
     doc: &FlowResolveSummaryV1,
     out: &mut Vec<LockedComponent>,
 ) -> Result<()> {
-    let mut seen: BTreeMap<String, (String, String, ComponentId)> = BTreeMap::new();
+    let mut seen: BTreeMap<String, LockedComponent> = BTreeMap::new();
 
     for (node, resolve) in &doc.nodes {
         let name = format!("{}___{node}", flow.id);
@@ -81,21 +80,44 @@ fn collect_from_summary(
                 (format_reference(source_ref), resolve.digest.clone())
             }
         };
-        seen.insert(name, (reference, digest, resolve.component_id.clone()));
+        let component_id = resolve.component_id.clone();
+        let key = component_id.as_str().to_string();
+        let name_for_insert = name.clone();
+        let reference_for_insert = reference.clone();
+        let digest_for_insert = digest.clone();
+
+        match seen.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(LockedComponent {
+                    name: name_for_insert,
+                    r#ref: reference_for_insert,
+                    digest: digest_for_insert,
+                    component_id: Some(component_id.clone()),
+                    bundled: false,
+                    bundled_path: None,
+                    wasm_sha256: None,
+                    resolved_digest: None,
+                });
+            }
+            Entry::Occupied(entry) => {
+                let existing = entry.get();
+                if existing.r#ref != reference || existing.digest != digest {
+                    bail!(
+                        "component {} resolved by nodes {} and {} points to different artifacts ({}@{} vs {}@{})",
+                        component_id.as_str(),
+                        existing.name,
+                        name,
+                        existing.r#ref,
+                        existing.digest,
+                        reference,
+                        digest
+                    );
+                }
+            }
+        }
     }
 
-    for (name, (reference, digest, component_id)) in seen {
-        out.push(LockedComponent {
-            name,
-            r#ref: reference,
-            digest,
-            component_id: Some(component_id),
-            bundled: false,
-            bundled_path: None,
-            wasm_sha256: None,
-            resolved_digest: None,
-        });
-    }
+    out.extend(seen.into_values());
 
     Ok(())
 }
@@ -141,5 +163,111 @@ fn format_reference(source: &FlowResolveSummarySourceRefV1) -> String {
                 format!("store://{}", r#ref)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use greentic_types::ComponentId;
+    use greentic_types::flow_resolve_summary::{
+        FlowResolveSummarySourceRefV1, FlowResolveSummaryV1, NodeResolveSummaryV1,
+    };
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn sample_flow() -> crate::config::FlowConfig {
+        crate::config::FlowConfig {
+            id: "meetingPrep".to_string(),
+            file: PathBuf::from("flows/main.ygtc"),
+            tags: Vec::new(),
+            entrypoints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn collect_from_summary_dedups_duplicate_component_ids() {
+        let flow = sample_flow();
+        let pack_dir = PathBuf::from("/tmp");
+        let component_id =
+            ComponentId::new("ai.greentic.component-adaptive-card").expect("valid component id");
+
+        let mut nodes = BTreeMap::new();
+        for name in ["node_one", "node_two"] {
+            nodes.insert(
+                name.to_string(),
+                NodeResolveSummaryV1 {
+                    component_id: component_id.clone(),
+                    source: FlowResolveSummarySourceRefV1::Oci {
+                        r#ref:
+                            "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
+                                .to_string(),
+                    },
+                    digest: "sha256:abcd".to_string(),
+                    manifest: None,
+                },
+            );
+        }
+
+        let summary = FlowResolveSummaryV1 {
+            schema_version: 1,
+            flow: "main.ygtc".to_string(),
+            nodes,
+        };
+
+        let mut entries = Vec::new();
+        collect_from_summary(&pack_dir, &flow, &summary, &mut entries).expect("collect entries");
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.name, "meetingPrep___node_one");
+        assert_eq!(
+            entry.component_id.as_ref().map(|id| id.as_str()),
+            Some(component_id.as_str())
+        );
+    }
+
+    #[test]
+    fn collect_from_summary_rejects_conflicting_lock_data() {
+        let flow = sample_flow();
+        let pack_dir = PathBuf::from("/tmp");
+        let component_id =
+            ComponentId::new("ai.greentic.component-adaptive-card").expect("valid component id");
+
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            "alpha".to_string(),
+            NodeResolveSummaryV1 {
+                component_id: component_id.clone(),
+                source: FlowResolveSummarySourceRefV1::Oci {
+                    r#ref: "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
+                        .to_string(),
+                },
+                digest: "sha256:abcd".to_string(),
+                manifest: None,
+            },
+        );
+        nodes.insert(
+            "beta".to_string(),
+            NodeResolveSummaryV1 {
+                component_id: component_id.clone(),
+                source: FlowResolveSummarySourceRefV1::Oci {
+                    r#ref: "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
+                        .to_string(),
+                },
+                digest: "sha256:dcba".to_string(),
+                manifest: None,
+            },
+        );
+
+        let summary = FlowResolveSummaryV1 {
+            schema_version: 1,
+            flow: "main.ygtc".to_string(),
+            nodes,
+        };
+
+        let mut entries = Vec::new();
+        let err = collect_from_summary(&pack_dir, &flow, &summary, &mut entries).unwrap_err();
+        assert!(err.to_string().contains("points to different artifacts"));
     }
 }
