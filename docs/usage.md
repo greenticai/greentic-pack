@@ -121,7 +121,7 @@ one if missing). `--strict` forces update to error when node mappings are
 absent. Builds require sidecars to map every node, so resolution is explicit
 instead of guessed.
 
-Packs can also carry a deterministic `pack.lock.json` (schema_version 1) beside
+Packs can also carry a deterministic `pack.lock.cbor` (version 1) beside
 `pack.yaml`:
 
 ```json
@@ -135,7 +135,7 @@ Packs can also carry a deterministic `pack.lock.json` (schema_version 1) beside
 
 Use `greentic-pack resolve --in <pack>` to aggregate sidecar refs, resolve
 remote digests via greentic-distributor-client (honouring `--offline`), and
-write a deterministic `pack.lock.json` (override output with `--lock <path>`).
+write a deterministic `pack.lock.cbor` (override output with `--lock <path>`).
 Builds expect this lockfile; if it is missing the error directs you to run
 `greentic-pack resolve`.
 
@@ -155,7 +155,7 @@ mode visible.
 Recommended workflow:
 
 1. `greentic-pack update --strict` (create/validate sidecars)
-2. `greentic-pack resolve` (writes pack.lock.json; use `--offline` in CI if pre-resolved)
+2. `greentic-pack resolve` (writes pack.lock.cbor; use `--offline` in CI if pre-resolved)
 3. `greentic-pack build --bundle=cache` (or `--bundle=none` for refs-only)
 4. `greentic-pack doctor dist/*.gtpack` (CI smoke)
 
@@ -350,6 +350,24 @@ meaning no extra WIT files are required in this repository.
 
 Hosts are expected to load `pack.wasm`, instantiate the component, call
 `list_flows`, and use MCP to execute the declared `mcp.exec` nodes.
+
+## Pack QA
+
+Pack-level QA is optional and is described by storing a `QaSpecSource` in
+`pack.cbor` metadata under the key `greentic.qa`. The value is CBOR encoded and
+points to a `schemas::pack::v0_6_0::PackQaSpec` (either inline or via a pack
+path).
+
+Recommended pack path convention:
+
+```
+qa/pack/default.cbor
+qa/pack/setup.cbor
+qa/pack/upgrade.cbor
+qa/pack/remove.cbor
+```
+
+Each file contains canonical CBOR for `PackQaSpec`.
 
 ## CI tips
 

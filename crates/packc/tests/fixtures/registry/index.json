@@ -1,0 +1,9 @@
+{
+  "components": {
+    "dev.local.component": {
+      "id": "dev.local.component",
+      "describe": "components/dev.local.component/describe.cbor",
+      "wasm": "components/dev.local.component/component.wasm"
+    }
+  }
+}

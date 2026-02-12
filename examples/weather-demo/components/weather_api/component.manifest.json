@@ -1,0 +1,20 @@
+{
+  "id": "weather_api",
+  "version": "0.0.1",
+  "world": "root:component/root",
+  "supports": ["messaging"],
+  "profiles": {
+    "default": "default",
+    "supported": ["default"]
+  },
+  "capabilities": {
+    "wasi": {
+      "random": false,
+      "clocks": false
+    },
+    "host": {}
+  },
+  "artifacts": {
+    "component_wasm": "component.wasm"
+  }
+}

@@ -32,6 +32,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 use crate::build;
+use crate::pack_lock_doctor::{PackLockDoctorInput, run_pack_lock_doctor};
 use crate::runtime::RuntimeContext;
 use crate::validator::{
     DEFAULT_VALIDATOR_ALLOW, LocalValidator, ValidatorConfig, ValidatorPolicy, run_wasm_validators,
@@ -114,6 +115,14 @@ pub struct InspectArgs {
     /// Validator loading policy
     #[arg(long, value_enum, default_value = "optional")]
     pub validator_policy: ValidatorPolicy,
+
+    /// Allow online resolution of component refs during pack lock checks (default: offline)
+    #[arg(long, default_value_t = false)]
+    pub online: bool,
+
+    /// Allow describe cache fallback when components cannot execute describe()
+    #[arg(long = "use-describe-cache", default_value_t = false)]
+    pub use_describe_cache: bool,
 }
 
 pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> Result<()> {
@@ -143,6 +152,25 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
         let mut output = run_pack_validation(&load, &args, runtime).await?;
         let mut doctor_diagnostics = Vec::new();
         let mut doctor_errors = false;
+        if args.component_doctor {
+            let use_describe_cache = args.use_describe_cache
+                || std::env::var("GREENTIC_PACK_USE_DESCRIBE_CACHE").is_ok()
+                || cfg!(test);
+            let pack_dir = match &mode {
+                InspectMode::Source(path) => Some(path.as_path()),
+                InspectMode::Archive(_) => None,
+            };
+            let pack_lock_output = run_pack_lock_doctor(PackLockDoctorInput {
+                load: &load,
+                pack_dir,
+                runtime,
+                allow_oci_tags: args.allow_oci_tags,
+                use_describe_cache,
+                online: args.online,
+            })?;
+            doctor_errors |= pack_lock_output.has_errors;
+            doctor_diagnostics.extend(pack_lock_output.diagnostics);
+        }
         if args.flow_doctor {
             doctor_errors |= run_flow_doctors(&load, &mut doctor_diagnostics, build_mode)?;
         }
@@ -170,7 +198,7 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
             if let Some(report) = validation.as_ref() {
                 payload["validation"] = serde_json::to_value(report)?;
             }
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            println!("{}", to_sorted_json(payload)?);
         }
         InspectFormat::Human => {
             print_human(&load, validation.as_ref());
@@ -187,6 +215,27 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
     }
 
     Ok(())
+}
+
+fn to_sorted_json(value: Value) -> Result<String> {
+    let sorted = sort_json(value);
+    Ok(serde_json::to_string_pretty(&sorted)?)
+}
+
+fn sort_json(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut sorted = serde_json::Map::new();
+            for (key, value) in entries {
+                sorted.insert(key, sort_json(value));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(sort_json).collect()),
+        other => other,
+    }
 }
 
 fn run_flow_doctors(
@@ -497,7 +546,7 @@ fn find_forbidden_source_paths(files: &HashMap<String, Vec<u8>>) -> Vec<String> 
 }
 
 fn is_forbidden_source_path(path: &str) -> bool {
-    if matches!(path, "pack.yaml" | "pack.manifest.json" | "pack.lock.json") {
+    if matches!(path, "pack.yaml" | "pack.manifest.json") {
         return true;
     }
     if matches!(

@@ -204,7 +204,7 @@ pub async fn handle(
         manifest_out: pack_root.join("dist").join("manifest.cbor"),
         sbom_out: None,
         gtpack_out: Some(opts.out.clone()),
-        lock_path: pack_root.join("pack.lock.json"),
+        lock_path: pack_root.join("pack.lock.cbor"),
         bundle: build::BundleMode::Cache,
         dry_run: false,
         secrets_req: None,

@@ -54,7 +54,7 @@ Options:
 - `--manifest <FILE>`: manifest output path (default: `dist/manifest.cbor`).
 - `--sbom <FILE>`: SBOM output path (legacy JSON stub).
 - `--gtpack-out <FILE>`: `.gtpack` output (default: `dist/<pack_dir>.gtpack`).
-- `--lock <FILE>`: pack.lock.json path (default: `<pack_dir>/pack.lock.json`).
+- `--lock <FILE>`: pack.lock.cbor path (default: `<pack_dir>/pack.lock.cbor`).
 - `--bundle <cache|none>`: embed component artifacts (`cache`) or keep refs only (`none`).
 - `--dry-run`: validate without writing outputs.
 - `--secrets-req <FILE>`: JSON file with extra secret requirements.
@@ -102,7 +102,7 @@ Options:
 
 ### `resolve`
 
-Resolve flow sidecars into `pack.lock.json`.
+Resolve flow sidecars into `pack.lock.cbor`.
 
 ```
 greentic-pack resolve --in <DIR> [--lock <FILE>]
@@ -111,6 +111,54 @@ greentic-pack resolve --in <DIR> [--lock <FILE>]
 Options:
 - `--in <DIR>`: pack root (default: `.`).
 - `--lock <FILE>`: custom lockfile path.
+
+### `inspect-lock`
+
+Print `pack.lock.cbor` as stable, sorted-key pretty JSON (machine-diffable).
+
+```
+greentic-pack inspect-lock --in <DIR> [--lock <FILE>]
+```
+
+Options:
+- `--in <DIR>`: pack root (default: `.`).
+- `--lock <FILE>`: custom lockfile path.
+
+### `qa`
+
+Run component QA specs and store answers as JSON + canonical CBOR.
+
+```
+greentic-pack qa --pack <DIR> --mode <default|setup|upgrade|remove> [options]
+```
+
+Options:
+- `--pack <DIR>`: pack root (default: `.`).
+- `--mode <MODE>`: QA mode to run (default: `default`).
+- `--answers <FILE_OR_DIR>`: override answers location (file or directory).
+- `--locale <BCP47>`: locale tag for i18n lookup (default: `en`).
+- `--non-interactive`: disable prompts; fail if required answers missing.
+- `--reask`: re-ask questions even if answers exist.
+- `--component <ID>`: run QA for specific component id(s).
+- `--all-locked`: run QA for every entry in `pack.lock.cbor`.
+- `--pack-only`: run pack-level QA only (requires `pack.cbor` metadata `greentic.qa`).
+
+Example:
+
+```
+greentic-pack qa --pack examples/qa-demo --mode setup
+```
+
+Pack-level QA is optional; if `pack.cbor` includes metadata key `greentic.qa`,
+it should be a CBOR-encoded `QaSpecSource` (InlineCbor or RefPackPath). When
+using `RefPackPath`, place canonical `PackQaSpec` CBOR at:
+
+```
+qa/pack/default.cbor
+qa/pack/setup.cbor
+qa/pack/upgrade.cbor
+qa/pack/remove.cbor
+```
 
 ### `doctor` (alias: `inspect`)
 
@@ -204,6 +252,22 @@ Verify a signed manifest with an Ed25519 public key.
 
 ```
 greentic-pack verify --pack <DIR> --key <FILE> [--manifest <FILE>]
+```
+
+### `wizard`
+
+Scaffold or amend packs.
+
+```
+greentic-pack wizard new-app <PACK_ID> --out <DIR> [--locale <LOCALE>] [--name <NAME>]
+greentic-pack wizard new-extension <PACK_ID> --kind <KIND> --out <DIR> [--locale <LOCALE>] [--name <NAME>]
+greentic-pack wizard add-component <REF_OR_ID> --pack <DIR> [--use-describe-cache] [--force] [--dry-run]
+```
+
+Example:
+
+```
+greentic-pack wizard add-component oci://ghcr.io/acme/components/demo:1.2.3 --pack ./demo-pack
 ```
 
 ### `config`

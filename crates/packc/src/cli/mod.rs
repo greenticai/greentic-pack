@@ -13,13 +13,16 @@ pub mod config;
 pub mod gui;
 pub mod input;
 pub mod inspect;
+pub mod inspect_lock;
 pub mod lint;
 pub mod plan;
 pub mod providers;
+pub mod qa;
 pub mod resolve;
 pub mod sign;
 pub mod update;
 pub mod verify;
+pub mod wizard;
 
 use crate::telemetry::set_current_tenant_ctx;
 use crate::{build, new, runtime};
@@ -75,6 +78,10 @@ pub enum Command {
     Doctor(self::inspect::InspectArgs),
     /// Deprecated alias for `doctor`
     Inspect(self::inspect::InspectArgs),
+    /// Inspect pack.lock.cbor (stable JSON to stdout)
+    InspectLock(self::inspect_lock::InspectLockArgs),
+    /// Run component QA and store answers.
+    Qa(self::qa::QaArgs),
     /// Inspect resolved configuration (provenance and warnings)
     Config(self::config::ConfigArgs),
     /// Generate a DeploymentPlan from a pack archive or source directory.
@@ -85,7 +92,10 @@ pub enum Command {
     /// Add data to pack extensions.
     #[command(subcommand)]
     AddExtension(self::add_extension::AddExtensionCommand),
-    /// Resolve component references and write pack.lock.json
+    /// Pack wizard helpers.
+    #[command(subcommand)]
+    Wizard(self::wizard::WizardCommand),
+    /// Resolve component references and write pack.lock.cbor
     Resolve(self::resolve::ResolveArgs),
 }
 
@@ -115,7 +125,7 @@ pub struct BuildArgs {
     #[arg(long = "gtpack-out", value_name = "FILE")]
     pub gtpack_out: Option<PathBuf>,
 
-    /// Optional path to pack.lock.json (default: <pack_dir>/pack.lock.json)
+    /// Optional path to pack.lock.cbor (default: <pack_dir>/pack.lock.cbor)
     #[arg(long = "lock", value_name = "FILE")]
     pub lock: Option<PathBuf>,
 
@@ -195,10 +205,13 @@ pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
             }
             self::inspect::handle(args, cli.json, &runtime).await?
         }
+        Command::InspectLock(args) => self::inspect_lock::handle(args)?,
+        Command::Qa(args) => self::qa::handle(args, &runtime)?,
         Command::Config(args) => self::config::handle(args, cli.json, &runtime)?,
         Command::Plan(args) => self::plan::handle(&args)?,
         Command::Providers(cmd) => self::providers::run(cmd)?,
         Command::AddExtension(cmd) => self::add_extension::handle(cmd)?,
+        Command::Wizard(cmd) => self::wizard::handle(cmd, &runtime)?,
         Command::Resolve(args) => self::resolve::handle(args, &runtime, true).await?,
     }
 

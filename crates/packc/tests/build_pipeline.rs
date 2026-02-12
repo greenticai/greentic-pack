@@ -1,8 +1,15 @@
 use std::fs;
 use std::path::Path;
 
+use greentic_types::cbor::canonical;
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use tempfile::tempdir;
 use zip::ZipArchive;
 
@@ -12,6 +19,57 @@ fn write_stub_wasm(path: &Path) {
         fs::create_dir_all(parent).expect("create parent dirs");
     }
     fs::write(path, STUB).expect("write stub wasm");
+}
+
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str, version: &str) {
+    let input_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let output_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: "run".to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: BTreeMap::new(),
+        redactions: Vec::new(),
+        constraints: BTreeMap::new(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: component_id.to_string(),
+            version: version.to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: BTreeMap::new(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = format!("{}.describe.cbor", wasm_path.display());
+    fs::write(describe_path, bytes).expect("write describe cache");
 }
 
 #[test]
@@ -60,6 +118,7 @@ nodes:
     )
     .unwrap();
     let wasm_path = component_dir.join("dev.hello-world.component.wasm");
+    write_describe_sidecar(&wasm_path, "dev.hello-world", "0.1.0");
 
     fs::write(
         pack_dir.join("pack.yaml"),
@@ -118,6 +177,7 @@ flows:
 
     let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(pack_dir)
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "build",
             "--in",
@@ -172,6 +232,7 @@ fn build_runs_update_by_default() {
     fs::create_dir_all(pack_dir.join("components")).unwrap();
     let wasm_path = pack_dir.join("components/auto.wasm");
     write_stub_wasm(&wasm_path);
+    write_describe_sidecar(&wasm_path, "dev.auto", "0.1.0");
     fs::create_dir_all(pack_dir.join("flows")).unwrap();
     fs::write(
         pack_dir.join("flows/main.ygtc"),
@@ -224,6 +285,7 @@ flows: []
     let gtpack_out = pack_dir.join("dist/pack.gtpack");
     let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(pack_dir)
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "build",
             "--in",
@@ -275,6 +337,7 @@ fn build_generates_summary_with_cached_oci_components() {
     fs::create_dir_all(pack_dir.join("components")).unwrap();
     let wasm_path = pack_dir.join("components/remote.wasm");
     write_stub_wasm(&wasm_path);
+    write_describe_sidecar(&wasm_path, "remote.component", "0.1.0");
 
     fs::create_dir_all(pack_dir.join("flows")).unwrap();
     fs::write(
@@ -331,7 +394,9 @@ flows:
     let cache_dir = temp.path().join("cache");
     let cached_component_dir = cache_dir.join(digest.trim_start_matches("sha256:"));
     fs::create_dir_all(&cached_component_dir).unwrap();
-    fs::write(cached_component_dir.join("component.wasm"), cached_bytes).unwrap();
+    let cached_wasm = cached_component_dir.join("component.wasm");
+    fs::write(&cached_wasm, cached_bytes).unwrap();
+    write_describe_sidecar(&cached_wasm, "remote.component", "0.1.0");
     let manifest = serde_json::json!({
         "id": "remote.component",
         "version": "0.1.0",
@@ -373,6 +438,7 @@ flows:
         .current_dir(pack_dir)
         .env("GREENTIC_DIST_CACHE_DIR", &cache_dir)
         .env("GREENTIC_DIST_OFFLINE", "1")
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "--cache-dir",
             cache_dir.to_str().unwrap(),
@@ -401,7 +467,9 @@ fn build_no_update_skips_update() {
     let temp = tempdir().unwrap();
     let pack_dir = temp.path();
     fs::create_dir_all(pack_dir.join("components")).unwrap();
-    write_stub_wasm(&pack_dir.join("components/manual.wasm"));
+    let manual_wasm = pack_dir.join("components/manual.wasm");
+    write_stub_wasm(&manual_wasm);
+    write_describe_sidecar(&manual_wasm, "dev.manual", "0.1.0");
     fs::create_dir_all(pack_dir.join("flows")).unwrap();
     fs::write(
         pack_dir.join("flows/main.ygtc"),
@@ -445,6 +513,7 @@ flows: []
     let pack_yaml_before = fs::read_to_string(pack_dir.join("pack.yaml")).unwrap();
     let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(pack_dir)
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "build",
             "--in",

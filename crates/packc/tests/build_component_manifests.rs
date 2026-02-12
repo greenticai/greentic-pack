@@ -2,8 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use greentic_types::cbor::canonical;
 use greentic_types::decode_pack_manifest;
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use tempfile::TempDir;
 use walkdir::WalkDir;
 use zip::ZipArchive;
@@ -185,7 +192,9 @@ assets: []
 fn cache_component(cache_dir: &Path, digest: &str, include_manifest: bool) {
     let dir = cache_dir.join(digest.trim_start_matches("sha256:"));
     fs::create_dir_all(&dir).expect("cache dir");
-    fs::write(dir.join("component.wasm"), b"cached-component").expect("write wasm");
+    let wasm_path = dir.join("component.wasm");
+    fs::write(&wasm_path, b"cached-component").expect("write wasm");
+    write_describe_sidecar(&wasm_path, COMPONENT_ID);
     if include_manifest {
         let manifest = serde_json::json!({
             "id": COMPONENT_ID,
@@ -217,6 +226,57 @@ fn cache_component(cache_dir: &Path, digest: &str, include_manifest: bool) {
         )
         .expect("write component.manifest.json");
     }
+}
+
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str) {
+    let input_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let output_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: "run".to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: BTreeMap::new(),
+        redactions: Vec::new(),
+        constraints: BTreeMap::new(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: component_id.to_string(),
+            version: COMPONENT_VERSION.to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: BTreeMap::new(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = PathBuf::from(format!("{}.describe.cbor", wasm_path.display()));
+    fs::write(describe_path, bytes).expect("write describe cache");
 }
 
 fn read_lock_digest(pack_dir: &Path) -> String {
@@ -252,6 +312,7 @@ fn build_pack(pack_dir: &Path, cache_dir: &Path, require_manifests: bool) -> std
     cmd.current_dir(pack_dir)
         .env("GREENTIC_DIST_CACHE_DIR", cache_dir)
         .env("GREENTIC_DIST_OFFLINE", "1")
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "--offline",
             "--cache-dir",
@@ -292,6 +353,7 @@ fn build_materializes_component_manifest_when_available() {
 
     let doctor = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(&pack_dir)
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "doctor",
             "--pack",
@@ -302,7 +364,12 @@ fn build_materializes_component_manifest_when_available() {
         ])
         .output()
         .expect("run doctor");
-    assert!(doctor.status.success(), "doctor failed");
+    assert!(
+        doctor.status.success(),
+        "doctor failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&doctor.stdout),
+        String::from_utf8_lossy(&doctor.stderr)
+    );
     let payload: Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
     let diagnostics = payload
         .get("validation")
@@ -335,6 +402,7 @@ fn build_rejects_component_manifest_id_mismatch() {
 
     let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "--offline",
             "build",
@@ -386,6 +454,7 @@ fn build_warns_when_manifest_missing() {
 
     let doctor = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(&pack_dir)
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "doctor",
             "--pack",
@@ -396,7 +465,12 @@ fn build_warns_when_manifest_missing() {
         ])
         .output()
         .expect("run doctor");
-    assert!(doctor.status.success(), "doctor failed");
+    assert!(
+        doctor.status.success(),
+        "doctor failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&doctor.stdout),
+        String::from_utf8_lossy(&doctor.stderr)
+    );
     let payload: Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
     let diagnostics = payload
         .get("validation")

@@ -1,47 +1,69 @@
+use std::collections::BTreeMap;
 use std::fs;
 
-use greentic_pack::pack_lock::{LockedComponent, PackLockV1, read_pack_lock, write_pack_lock};
+use greentic_pack::pack_lock::{
+    LockedComponent, LockedOperation, PackLockV1, read_pack_lock, write_pack_lock,
+};
 use tempfile::TempDir;
 
 #[test]
 fn pack_lock_roundtrips_with_sorted_components() {
     let temp = TempDir::new().expect("temp dir");
-    let path = temp.path().join("pack.lock.json");
+    let path = temp.path().join("pack.lock.cbor");
 
-    let lock = PackLockV1::new(vec![
+    let mut components = BTreeMap::new();
+    components.insert(
+        "beta.component".to_string(),
         LockedComponent {
-            name: "beta".into(),
-            r#ref: "oci://example/beta:1.0.0".into(),
-            digest: "sha256:bbbb".into(),
-            component_id: None,
-            bundled: false,
-            bundled_path: None,
-            wasm_sha256: None,
-            resolved_digest: None,
+            component_id: "beta.component".to_string(),
+            r#ref: Some("oci://example/beta:1.0.0".into()),
+            abi_version: "0.6.0".to_string(),
+            resolved_digest: "sha256:bbbb".into(),
+            describe_hash: "b".repeat(64),
+            operations: vec![LockedOperation {
+                operation_id: "run".into(),
+                schema_hash: "c".repeat(64),
+            }],
+            world: Some("greentic:component/component@0.6.0".into()),
+            component_version: Some("1.0.0".into()),
+            role: Some("tool".into()),
         },
+    );
+    components.insert(
+        "alpha.component".to_string(),
         LockedComponent {
-            name: "alpha".into(),
-            r#ref: "repo://example/alpha?rev=1".into(),
-            digest: "sha256:aaaa".into(),
-            component_id: None,
-            bundled: false,
-            bundled_path: None,
-            wasm_sha256: None,
-            resolved_digest: None,
+            component_id: "alpha.component".to_string(),
+            r#ref: Some("repo://example/alpha?rev=1".into()),
+            abi_version: "0.6.0".to_string(),
+            resolved_digest: "sha256:aaaa".into(),
+            describe_hash: "a".repeat(64),
+            operations: vec![
+                LockedOperation {
+                    operation_id: "alpha".into(),
+                    schema_hash: "e".repeat(64),
+                },
+                LockedOperation {
+                    operation_id: "zeta".into(),
+                    schema_hash: "d".repeat(64),
+                },
+            ],
+            world: None,
+            component_version: None,
+            role: None,
         },
-    ]);
+    );
+    let lock = PackLockV1::new(components);
 
     write_pack_lock(&path, &lock).expect("write pack.lock");
-    let written = fs::read_to_string(&path).expect("read file");
-
-    // Expect deterministic ordering by name (alpha before beta).
-    assert!(
-        written.find("alpha").unwrap() < written.find("beta").unwrap(),
-        "components should be sorted deterministically"
-    );
+    let first = fs::read(&path).expect("read file");
 
     let roundtrip = read_pack_lock(&path).expect("read pack.lock");
-    assert_eq!(roundtrip.schema_version, 1);
+    assert_eq!(roundtrip.version, 1);
     assert_eq!(roundtrip.components.len(), 2);
-    assert_eq!(roundtrip.components[0].name, "alpha");
+    let alpha = roundtrip.components.get("alpha.component").expect("alpha");
+    assert_eq!(alpha.operations[0].operation_id, "alpha");
+
+    write_pack_lock(&path, &roundtrip).expect("write pack.lock again");
+    let second = fs::read(&path).expect("read file again");
+    assert_eq!(first, second, "lock bytes should be deterministic");
 }

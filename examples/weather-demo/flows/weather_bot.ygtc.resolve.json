@@ -3,23 +3,23 @@
   "nodes": {
     "collect_location": {
       "source": {
-        "digest": "sha256:deadbeef",
-        "kind": "repo",
-        "ref": "io.3bridges.components.qa@1.0.0"
+        "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+        "kind": "local",
+        "path": "../components/qa.process/component.wasm"
       }
     },
     "forecast_weather": {
       "source": {
-        "digest": "sha256:deadbeef",
-        "kind": "repo",
-        "ref": "io.3bridges.components.mcp@1.0.0"
+        "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
+        "kind": "local",
+        "path": "../components/mcp.exec/component.wasm"
       }
     },
     "weather_text": {
       "source": {
         "digest": "sha256:93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476",
         "kind": "local",
-        "path": "../components/templating.handlebars.wasm"
+        "path": "../components/templating.handlebars/component.wasm"
       }
     }
   },

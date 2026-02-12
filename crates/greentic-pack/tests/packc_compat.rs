@@ -4,6 +4,12 @@ use std::process::Command;
 
 use assert_cmd::prelude::*;
 use greentic_pack::reader::{SigningPolicy, open_pack};
+use greentic_types::cbor::canonical;
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -13,6 +19,55 @@ fn write_stub_wasm(path: &Path) {
         fs::create_dir_all(parent).expect("create parent dirs");
     }
     fs::write(path, STUB).expect("write stub wasm");
+}
+
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str) {
+    let input_schema = SchemaIr::Object {
+        properties: Default::default(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let output_schema = SchemaIr::Object {
+        properties: Default::default(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: Default::default(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: "handle_message".to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: Default::default(),
+        redactions: Vec::new(),
+        constraints: Default::default(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: component_id.to_string(),
+            version: "0.1.0".to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: Default::default(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = format!("{}.describe.cbor", wasm_path.display());
+    fs::write(describe_path, bytes).expect("write describe cache");
 }
 
 #[test]
@@ -31,6 +86,7 @@ fn open_pack_accepts_packc_gtpack() {
     fs::create_dir_all(pack_dir.join("components")).expect("components dir");
     let wasm_path = pack_dir.join("components/demo.wasm");
     write_stub_wasm(&wasm_path);
+    write_describe_sidecar(&wasm_path, "demo.component");
     let digest = format!(
         "sha256:{:x}",
         Sha256::digest(fs::read(&wasm_path).expect("read wasm"))
@@ -122,6 +178,7 @@ nodes:
     let pack_path = temp.path().join("pack.gtpack");
     Command::new("cargo")
         .current_dir(&workspace_root)
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "run",
             "-p",

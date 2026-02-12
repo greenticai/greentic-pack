@@ -1,6 +1,13 @@
+use greentic_types::cbor::canonical;
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use greentic_types::{decode_pack_manifest, pack_manifest::PackManifest};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
@@ -62,6 +69,7 @@ fn link_shared_component(wasm_src: &Path, pack_dir: &Path) -> PathBuf {
 fn write_pack_files(pack_dir: &Path, wasm_src: &Path, pack_name: &str) {
     fs::create_dir_all(pack_dir.join("flows")).expect("pack flow dir");
     let component_path = link_shared_component(wasm_src, pack_dir);
+    write_describe_sidecar(&component_path);
     write_summary(pack_dir, wasm_src);
 
     let pack_yaml = format!(
@@ -124,6 +132,55 @@ nodes:
     fs::write(pack_dir.join("flows").join("main.ygtc"), flow).expect("flow file");
 }
 
+fn write_describe_sidecar(wasm_path: &Path) {
+    let input_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let output_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: OPERATION.to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: BTreeMap::new(),
+        redactions: Vec::new(),
+        constraints: BTreeMap::new(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: "ai.greentic.shared-component".to_string(),
+            version: "0.1.0".to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: BTreeMap::new(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = format!("{}.describe.cbor", wasm_path.display());
+    fs::write(describe_path, bytes).expect("write describe cache");
+}
+
 fn write_summary(pack_dir: &Path, wasm_src: &Path) {
     let summary_path = pack_dir.join("flows/main.ygtc.resolve.summary.json");
     let parent = summary_path.parent().expect("summary parent");
@@ -160,6 +217,7 @@ fn build_pack(pack_dir: &Path, gtpack_name: &str) -> (PathBuf, PathBuf) {
     let manifest_out = pack_dir.join("dist").join("manifest.cbor");
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"));
     cmd.current_dir(workspace_root());
+    cmd.env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1");
     cmd.args([
         "build",
         "--in",

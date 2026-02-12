@@ -25,6 +25,7 @@ clap = { workspace = true }
 ed25519-dalek = { workspace = true }
 greentic-flow = { workspace = true }
 greentic-types = { workspace = true }
+greentic-interfaces-host = { workspace = true }
 greentic-telemetry = { workspace = true }
 hex = { workspace = true }
 ignore = { workspace = true }
@@ -55,6 +56,8 @@ greentic-distributor-client = { workspace = true, default-features = false, feat
 pack_component_template = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
+indexmap = { workspace = true }
+ciborium = { workspace = true }
 
 [lib]
 name = "packc"

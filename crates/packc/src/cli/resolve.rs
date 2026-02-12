@@ -1,12 +1,24 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, btree_map::Entry};
+use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
+use greentic_distributor_client::{DistClient, DistOptions};
+use greentic_interfaces_host::component_v0_6::{ComponentV0_6, instantiate_component_v0_6};
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, write_pack_lock};
+use greentic_pack::resolver::{ComponentResolver, ResolveReq, ResolvedComponent};
+use greentic_types::cbor::canonical;
 use greentic_types::flow_resolve_summary::{FlowResolveSummarySourceRefV1, FlowResolveSummaryV1};
+use greentic_types::schemas::component::v0_6_0::{ComponentDescribe, schema_hash};
+use hex;
+use sha2::{Digest, Sha256};
+use tokio::runtime::Handle;
+use wasmtime::Engine;
+use wasmtime::component::{Component as WasmtimeComponent, Linker};
 
 use crate::config::load_pack_config;
 use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
@@ -18,7 +30,7 @@ pub struct ResolveArgs {
     #[arg(long = "in", value_name = "DIR", default_value = ".")]
     pub input: PathBuf,
 
-    /// Output path for pack.lock.json (default: pack.lock.json under pack root).
+    /// Output path for pack.lock.cbor (default: pack.lock.cbor under pack root).
     #[arg(long = "lock", value_name = "FILE")]
     pub lock: Option<PathBuf>,
 }
@@ -31,11 +43,18 @@ pub async fn handle(args: ResolveArgs, runtime: &RuntimeContext, emit_path: bool
     let lock_path = resolve_lock_path(&pack_dir, args.lock.as_deref());
 
     let config = load_pack_config(&pack_dir)?;
-    let mut entries: Vec<LockedComponent> = Vec::new();
-    let _ = runtime;
+    let mut entries: BTreeMap<String, LockedComponent> = BTreeMap::new();
     for flow in &config.flows {
         let summary = read_flow_resolve_summary_for_flow(&pack_dir, flow)?;
         collect_from_summary(&pack_dir, flow, &summary, &mut entries)?;
+    }
+
+    if !entries.is_empty() {
+        let resolver = PackResolver::new(runtime)?;
+        let engine = Engine::default();
+        for component in entries.values_mut() {
+            populate_component_contract(&engine, &resolver, component).await?;
+        }
     }
 
     let lock = PackLockV1::new(entries);
@@ -51,7 +70,7 @@ fn resolve_lock_path(pack_dir: &Path, override_path: Option<&Path>) -> PathBuf {
     match override_path {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => pack_dir.join(path),
-        None => pack_dir.join("pack.lock.json"),
+        None => pack_dir.join("pack.lock.cbor"),
     }
 }
 
@@ -59,12 +78,11 @@ fn collect_from_summary(
     pack_dir: &Path,
     flow: &crate::config::FlowConfig,
     doc: &FlowResolveSummaryV1,
-    out: &mut Vec<LockedComponent>,
+    out: &mut BTreeMap<String, LockedComponent>,
 ) -> Result<()> {
     let mut seen: BTreeMap<String, LockedComponent> = BTreeMap::new();
 
-    for (node, resolve) in &doc.nodes {
-        let name = format!("{}___{node}", flow.id);
+    for resolve in doc.nodes.values() {
         let source_ref = &resolve.source;
         let (reference, digest) = match source_ref {
             FlowResolveSummarySourceRefV1::Local { path } => {
@@ -82,33 +100,37 @@ fn collect_from_summary(
         };
         let component_id = resolve.component_id.clone();
         let key = component_id.as_str().to_string();
-        let name_for_insert = name.clone();
         let reference_for_insert = reference.clone();
         let digest_for_insert = digest.clone();
-
+        let world = resolve.manifest.as_ref().map(|meta| meta.world.clone());
+        let component_version = resolve
+            .manifest
+            .as_ref()
+            .map(|meta| meta.version.to_string());
         match seen.entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(LockedComponent {
-                    name: name_for_insert,
-                    r#ref: reference_for_insert,
-                    digest: digest_for_insert,
-                    component_id: Some(component_id.clone()),
-                    bundled: false,
-                    bundled_path: None,
-                    wasm_sha256: None,
-                    resolved_digest: None,
+                    component_id: component_id.as_str().to_string(),
+                    r#ref: Some(reference_for_insert),
+                    abi_version: "0.6.0".to_string(),
+                    resolved_digest: digest_for_insert,
+                    describe_hash: String::new(),
+                    operations: Vec::new(),
+                    world,
+                    component_version,
+                    role: None,
                 });
             }
             Entry::Occupied(entry) => {
                 let existing = entry.get();
-                if existing.r#ref != reference || existing.digest != digest {
+                if existing.r#ref.as_deref() != Some(reference.as_str())
+                    || existing.resolved_digest != digest
+                {
                     bail!(
-                        "component {} resolved by nodes {} and {} points to different artifacts ({}@{} vs {}@{})",
+                        "component {} resolved by nodes points to different artifacts ({}@{} vs {}@{})",
                         component_id.as_str(),
-                        existing.name,
-                        name,
-                        existing.r#ref,
-                        existing.digest,
+                        existing.r#ref.as_deref().unwrap_or("unknown-ref"),
+                        existing.resolved_digest,
                         reference,
                         digest
                     );
@@ -117,9 +139,179 @@ fn collect_from_summary(
         }
     }
 
-    out.extend(seen.into_values());
+    out.extend(seen);
 
     Ok(())
+}
+
+async fn populate_component_contract(
+    engine: &Engine,
+    resolver: &dyn ComponentResolver,
+    component: &mut LockedComponent,
+) -> Result<()> {
+    let reference = component
+        .r#ref
+        .as_ref()
+        .ok_or_else(|| anyhow!("component {} missing ref", component.component_id))?;
+    let resolved = resolver.resolve(ResolveReq {
+        component_id: component.component_id.clone(),
+        reference: reference.clone(),
+        expected_digest: component.resolved_digest.clone(),
+        abi_version: component.abi_version.clone(),
+        world: component.world.clone(),
+        component_version: component.component_version.clone(),
+    })?;
+    let bytes = resolved.bytes;
+    let use_describe_cache =
+        std::env::var("GREENTIC_PACK_USE_DESCRIBE_CACHE").is_ok() || cfg!(test);
+    let describe = match describe_component(engine, &bytes) {
+        Ok(describe) => describe,
+        Err(err) => {
+            if let Some(describe) = load_describe_from_cache_path(resolved.source_path.as_deref())?
+            {
+                describe
+            } else if use_describe_cache {
+                return Err(err).context("describe failed and no describe cache present");
+            } else {
+                return Err(err);
+            }
+        }
+    };
+
+    if describe.info.id != component.component_id {
+        bail!(
+            "component {} describe id mismatch: {}",
+            component.component_id,
+            describe.info.id
+        );
+    }
+
+    let describe_hash = compute_describe_hash(&describe)?;
+    let mut operations: Vec<_> = describe
+        .operations
+        .iter()
+        .map(|op| {
+            let hash = schema_hash(&op.input.schema, &op.output.schema, &describe.config_schema)
+                .map_err(|err| anyhow!("schema_hash for {}: {}", op.id, err))?;
+            Ok((op.id.clone(), hash))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(
+            |(operation_id, schema_hash)| greentic_pack::pack_lock::LockedOperation {
+                operation_id,
+                schema_hash,
+            },
+        )
+        .collect();
+    operations.sort_by(|a, b| a.operation_id.cmp(&b.operation_id));
+
+    component.describe_hash = describe_hash;
+    component.operations = operations;
+    component.role = Some(describe.info.role);
+    component.component_version = Some(describe.info.version);
+    Ok(())
+}
+
+struct PackResolver {
+    runtime: RuntimeContext,
+    dist: DistClient,
+}
+
+impl PackResolver {
+    fn new(runtime: &RuntimeContext) -> Result<Self> {
+        let dist = DistClient::new(DistOptions {
+            cache_dir: runtime.cache_dir(),
+            allow_tags: true,
+            offline: runtime.network_policy() == crate::runtime::NetworkPolicy::Offline,
+            allow_insecure_local_http: false,
+        });
+        Ok(Self {
+            runtime: runtime.clone(),
+            dist,
+        })
+    }
+}
+
+impl ComponentResolver for PackResolver {
+    fn resolve(&self, req: ResolveReq) -> Result<ResolvedComponent> {
+        if req.reference.starts_with("file://") {
+            let path = strip_file_uri_prefix(&req.reference);
+            let bytes = fs::read(path).with_context(|| format!("read {}", path))?;
+            return Ok(ResolvedComponent {
+                bytes,
+                resolved_digest: req.expected_digest,
+                component_id: req.component_id,
+                abi_version: req.abi_version,
+                world: req.world,
+                component_version: req.component_version,
+                source_path: Some(PathBuf::from(path)),
+            });
+        }
+
+        let handle =
+            Handle::try_current().context("component resolution requires a Tokio runtime")?;
+        let resolved = if self.runtime.network_policy() == crate::runtime::NetworkPolicy::Offline {
+            block_on(&handle, self.dist.ensure_cached(&req.expected_digest))
+                .map_err(|err| anyhow!("offline cache miss for {}: {}", req.reference, err))?
+        } else {
+            block_on(&handle, self.dist.resolve_ref(&req.reference))
+                .map_err(|err| anyhow!("resolve {}: {}", req.reference, err))?
+        };
+        let path = resolved
+            .cache_path
+            .ok_or_else(|| anyhow!("resolved component missing path for {}", req.reference))?;
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        Ok(ResolvedComponent {
+            bytes,
+            resolved_digest: req.expected_digest,
+            component_id: req.component_id,
+            abi_version: req.abi_version,
+            world: req.world,
+            component_version: req.component_version,
+            source_path: Some(path),
+        })
+    }
+}
+
+fn block_on<F, T, E>(handle: &Handle, fut: F) -> std::result::Result<T, E>
+where
+    F: Future<Output = std::result::Result<T, E>>,
+{
+    tokio::task::block_in_place(|| handle.block_on(fut))
+}
+
+fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
+    let component =
+        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
+    let mut store = wasmtime::Store::new(engine, ());
+    let linker = Linker::new(engine);
+    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
+        .context("instantiate component-v0-v6-v0")?;
+    let describe_bytes = instance.describe(&mut store).context("call describe")?;
+    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+}
+
+fn load_describe_from_cache_path(path: Option<&Path>) -> Result<Option<ComponentDescribe>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let describe_path = PathBuf::from(format!("{}.describe.cbor", path.display()));
+    if !describe_path.exists() {
+        return Ok(None);
+    }
+    let bytes =
+        fs::read(&describe_path).with_context(|| format!("read {}", describe_path.display()))?;
+    canonical::ensure_canonical(&bytes).context("describe cache must be canonical")?;
+    let describe = canonical::from_cbor(&bytes).context("decode ComponentDescribe from cache")?;
+    Ok(Some(describe))
+}
+
+fn compute_describe_hash(describe: &ComponentDescribe) -> Result<String> {
+    let bytes =
+        canonical::to_canonical_cbor_allow_floats(describe).context("canonicalize describe")?;
+    let digest = Sha256::digest(bytes.as_slice());
+    Ok(hex::encode(digest))
 }
 
 fn normalize_local(
@@ -203,7 +395,7 @@ mod tests {
                             "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
                                 .to_string(),
                     },
-                    digest: "sha256:abcd".to_string(),
+                    digest: format!("sha256:{}", "a".repeat(64)),
                     manifest: None,
                 },
             );
@@ -215,16 +407,12 @@ mod tests {
             nodes,
         };
 
-        let mut entries = Vec::new();
+        let mut entries = BTreeMap::new();
         collect_from_summary(&pack_dir, &flow, &summary, &mut entries).expect("collect entries");
 
         assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
-        assert_eq!(entry.name, "meetingPrep___node_one");
-        assert_eq!(
-            entry.component_id.as_ref().map(|id| id.as_str()),
-            Some(component_id.as_str())
-        );
+        let entry = entries.get(component_id.as_str()).expect("component entry");
+        assert_eq!(entry.component_id, component_id.as_str());
     }
 
     #[test]
@@ -243,7 +431,7 @@ mod tests {
                     r#ref: "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
                         .to_string(),
                 },
-                digest: "sha256:abcd".to_string(),
+                digest: format!("sha256:{}", "b".repeat(64)),
                 manifest: None,
             },
         );
@@ -255,7 +443,7 @@ mod tests {
                     r#ref: "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
                         .to_string(),
                 },
-                digest: "sha256:dcba".to_string(),
+                digest: format!("sha256:{}", "c".repeat(64)),
                 manifest: None,
             },
         );
@@ -266,7 +454,7 @@ mod tests {
             nodes,
         };
 
-        let mut entries = Vec::new();
+        let mut entries = BTreeMap::new();
         let err = collect_from_summary(&pack_dir, &flow, &summary, &mut entries).unwrap_err();
         assert!(err.to_string().contains("points to different artifacts"));
     }

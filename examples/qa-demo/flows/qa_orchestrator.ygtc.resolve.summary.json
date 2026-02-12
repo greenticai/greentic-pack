@@ -3,7 +3,7 @@
   "nodes": {
     "call_specialist": {
       "component_id": "flow.call",
-      "digest": "sha256:deadbeef",
+      "digest": "sha256:22b078722a38e8e1f426a32e0af39e1b9ce7b8d5a1391a9f99fe6b5c849959a1",
       "source": {
         "kind": "repo",
         "ref": "io.3bridges.components.flow@1.0.0"
@@ -11,7 +11,7 @@
     },
     "collect_question": {
       "component_id": "qa.process",
-      "digest": "sha256:deadbeef",
+      "digest": "sha256:e37ce3f14a548b82e9ccf57aa72d54b6da00b40ddde0561894b200a44bc29f9e",
       "source": {
         "kind": "repo",
         "ref": "io.3bridges.components.qa@1.0.0"
@@ -19,7 +19,7 @@
     },
     "load_profile": {
       "component_id": "state.get",
-      "digest": "sha256:deadbeef",
+      "digest": "sha256:4982ad55d41fe0928cbd784cd226839cda1fee78b72ca2a2a8d33557a3092d7a",
       "source": {
         "kind": "repo",
         "ref": "io.3bridges.components.state@1.0.0"
@@ -27,7 +27,7 @@
     },
     "respond_to_user": {
       "component_id": "messaging.emit",
-      "digest": "sha256:deadbeef",
+      "digest": "sha256:c6eb415ca3ed880ff64357ca4de271a343f37b629977f34d133dc475f1b7ef57",
       "source": {
         "kind": "repo",
         "ref": "io.3bridges.components.messaging@1.0.0"

@@ -1,6 +1,12 @@
 use assert_cmd::prelude::*;
-use serde_json::Value;
+use greentic_types::cbor::canonical;
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,6 +27,7 @@ fn write_pack(dir: &Path, wasm_contents: &[u8]) {
     let wasm_path = dir.join("components").join("demo.wasm");
     fs::create_dir_all(wasm_path.parent().unwrap()).unwrap();
     fs::write(&wasm_path, wasm_contents).unwrap();
+    write_describe_sidecar(&wasm_path, "demo.component");
     let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
     let summary = format!(
         r#"{{
@@ -64,6 +71,7 @@ fn write_pack_with_local_summary(dir: &Path, wasm_contents: &[u8]) {
     let wasm_path = dir.join("components").join("demo.wasm");
     fs::create_dir_all(wasm_path.parent().unwrap()).unwrap();
     fs::write(&wasm_path, wasm_contents).unwrap();
+    write_describe_sidecar(&wasm_path, "demo.component");
 
     let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
     let summary = serde_json::json!({
@@ -106,6 +114,7 @@ fn write_pack_with_local_summary_file_uri(dir: &Path, wasm_contents: &[u8]) {
     let wasm_path = dir.join("components").join("demo.wasm");
     fs::create_dir_all(wasm_path.parent().unwrap()).unwrap();
     fs::write(&wasm_path, wasm_contents).unwrap();
+    write_describe_sidecar(&wasm_path, "demo.component");
 
     let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
     let summary = serde_json::json!({
@@ -145,10 +154,11 @@ fn resolve_writes_lockfile_with_digest() {
     let pack_dir = temp.path().to_path_buf();
 
     write_pack(&pack_dir, b"wasm-bytes");
-    let lock_path = pack_dir.join("pack.lock.json");
+    let lock_path = pack_dir.join("pack.lock.cbor");
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "resolve",
             "--in",
@@ -161,18 +171,15 @@ fn resolve_writes_lockfile_with_digest() {
         .assert()
         .success();
 
-    let contents = fs::read_to_string(&lock_path).expect("lock file");
-    let json: Value = serde_json::from_str(&contents).unwrap();
-    assert_eq!(json["schema_version"], 1);
-    let components = json["components"].as_array().unwrap();
-    assert_eq!(components.len(), 1);
-    assert_eq!(components[0]["name"].as_str().unwrap(), "main___call");
-    assert!(
-        components[0]["digest"]
-            .as_str()
-            .unwrap()
-            .starts_with("sha256:")
-    );
+    let lock = greentic_pack::pack_lock::read_pack_lock(&lock_path).expect("lock file");
+    assert_eq!(lock.version, 1);
+    assert_eq!(lock.components.len(), 1);
+    let entry = lock
+        .components
+        .get("demo.component")
+        .expect("component entry");
+    assert_eq!(entry.component_id, "demo.component");
+    assert!(entry.resolved_digest.starts_with("sha256:"));
 }
 
 #[test]
@@ -198,6 +205,7 @@ flows:
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "resolve",
             "--in",
@@ -218,6 +226,7 @@ fn resolve_local_paths_relative_to_flow() {
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "resolve",
             "--in",
@@ -228,17 +237,64 @@ fn resolve_local_paths_relative_to_flow() {
         .assert()
         .success();
 
-    let lock_path = pack_dir.join("pack.lock.json");
-    let contents = fs::read_to_string(&lock_path).expect("lock file");
-    let json: Value = serde_json::from_str(&contents).unwrap();
-    let components = json["components"].as_array().unwrap();
-    assert_eq!(components.len(), 1);
-    assert!(
-        components[0]["digest"]
-            .as_str()
-            .unwrap()
-            .starts_with("sha256:")
-    );
+    let lock_path = pack_dir.join("pack.lock.cbor");
+    let lock = greentic_pack::pack_lock::read_pack_lock(&lock_path).expect("lock file");
+    let entry = lock
+        .components
+        .get("demo.component")
+        .expect("component entry");
+    assert!(entry.resolved_digest.starts_with("sha256:"));
+}
+
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str) {
+    let input_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let output_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: "run".to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: BTreeMap::new(),
+        redactions: Vec::new(),
+        constraints: BTreeMap::new(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: component_id.to_string(),
+            version: "0.1.0".to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: BTreeMap::new(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = wasm_path.to_string_lossy().to_string() + ".describe.cbor";
+    fs::write(describe_path, bytes).expect("write describe cache");
 }
 
 #[test]
@@ -250,6 +306,7 @@ fn resolve_local_file_uri_paths_relative_to_flow() {
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "resolve",
             "--in",
@@ -260,17 +317,13 @@ fn resolve_local_file_uri_paths_relative_to_flow() {
         .assert()
         .success();
 
-    let lock_path = pack_dir.join("pack.lock.json");
-    let contents = fs::read_to_string(&lock_path).expect("lock file");
-    let json: Value = serde_json::from_str(&contents).unwrap();
-    let components = json["components"].as_array().unwrap();
-    assert_eq!(components.len(), 1);
-    assert!(
-        components[0]["digest"]
-            .as_str()
-            .unwrap()
-            .starts_with("sha256:")
-    );
+    let lock_path = pack_dir.join("pack.lock.cbor");
+    let lock = greentic_pack::pack_lock::read_pack_lock(&lock_path).expect("lock file");
+    let entry = lock
+        .components
+        .get("demo.component")
+        .expect("component entry");
+    assert!(entry.resolved_digest.starts_with("sha256:"));
 }
 
 #[test]
@@ -286,6 +339,7 @@ fn resolve_falls_back_when_manifest_artifact_mismatch() {
     let wasm_path = pack_dir.join("components").join("demo.wasm");
     fs::create_dir_all(wasm_path.parent().unwrap()).unwrap();
     fs::write(&wasm_path, b"wasm-bytes").unwrap();
+    write_describe_sidecar(&wasm_path, "ai.greentic.demo-comp");
 
     let sidecar = serde_json::json!({
         "schema_version": 1,
@@ -331,6 +385,7 @@ flows:
 
     Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "resolve",
             "--in",

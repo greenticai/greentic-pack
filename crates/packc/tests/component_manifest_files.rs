@@ -1,9 +1,16 @@
+use greentic_types::cbor::canonical;
 use greentic_types::pack::extensions::component_manifests::{
     ComponentManifestIndexEntryV1, ComponentManifestIndexV1, EXT_COMPONENT_MANIFEST_INDEX_V1,
     ManifestEncoding,
 };
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use greentic_types::{ComponentManifest, decode_pack_manifest};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -25,10 +32,62 @@ fn write_stub_wasm(path: &Path) {
     fs::write(path, STUB).expect("stub wasm");
 }
 
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str, version: &str) {
+    let input_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let output_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: "run".to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: BTreeMap::new(),
+        redactions: Vec::new(),
+        constraints: BTreeMap::new(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: component_id.to_string(),
+            version: version.to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: BTreeMap::new(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = format!("{}.describe.cbor", wasm_path.display());
+    fs::write(describe_path, bytes).expect("write describe cache");
+}
+
 fn write_pack_files(pack_dir: &Path) {
     fs::create_dir_all(pack_dir.join("flows")).expect("flows dir");
     let wasm_path = pack_dir.join("components/demo.wasm");
     write_stub_wasm(&wasm_path);
+    write_describe_sidecar(&wasm_path, COMPONENT_ID, "0.1.0");
 
     let pack_yaml = format!(
         r#"pack_id: dev.local.manifest-demo
@@ -119,6 +178,7 @@ fn component_manifests_are_embedded_and_indexed() {
 
     let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "build",
             "--in",

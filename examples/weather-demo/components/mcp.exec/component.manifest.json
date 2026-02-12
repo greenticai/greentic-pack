@@ -1,0 +1,20 @@
+{
+  "id": "mcp.exec",
+  "version": "0.1.0",
+  "world": "root:component/root",
+  "supports": ["messaging"],
+  "profiles": {
+    "default": "default",
+    "supported": ["default"]
+  },
+  "capabilities": {
+    "wasi": {
+      "random": false,
+      "clocks": false
+    },
+    "host": {}
+  },
+  "artifacts": {
+    "component_wasm": "component.wasm"
+  }
+}

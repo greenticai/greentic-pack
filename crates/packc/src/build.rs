@@ -112,7 +112,7 @@ impl BuildOptions {
         let lock_path = args
             .lock
             .map(|p| if p.is_absolute() { p } else { pack_dir.join(p) })
-            .unwrap_or_else(|| pack_dir.join("pack.lock.json"));
+            .unwrap_or_else(|| pack_dir.join("pack.lock.cbor"));
 
         Ok(Self {
             pack_dir,
@@ -149,17 +149,19 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
         crate::cli::update::update_pack(&opts.pack_dir, false)?;
     }
 
-    // Resolve component references into pack.lock.json before building to ensure
+    // Resolve component references into pack.lock.cbor before building to ensure
     // manifests/extensions can rely on the lockfile contents.
-    resolve::handle(
-        ResolveArgs {
-            input: opts.pack_dir.clone(),
-            lock: Some(opts.lock_path.clone()),
-        },
-        &opts.runtime,
-        false,
-    )
-    .await?;
+    if !(opts.dry_run && opts.lock_path.exists()) {
+        resolve::handle(
+            ResolveArgs {
+                input: opts.pack_dir.clone(),
+                lock: Some(opts.lock_path.clone()),
+            },
+            &opts.runtime,
+            false,
+        )
+        .await?;
+    }
 
     let config = crate::config::load_pack_config(&opts.pack_dir)?;
     info!(
@@ -183,11 +185,11 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
 
     if !opts.lock_path.exists() {
         anyhow::bail!(
-            "pack.lock.json is required (run `greentic-pack resolve`); missing: {}",
+            "pack.lock.cbor is required (run `greentic-pack resolve`); missing: {}",
             opts.lock_path.display()
         );
     }
-    let mut pack_lock = read_pack_lock(&opts.lock_path).with_context(|| {
+    let pack_lock = read_pack_lock(&opts.lock_path).with_context(|| {
         format!(
             "failed to read pack lock {} (try `greentic-pack resolve`)",
             opts.lock_path.display()
@@ -202,8 +204,13 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
         opts.dev,
     )?;
     build.lock_components =
-        collect_lock_component_artifacts(&mut pack_lock, &opts.runtime, opts.bundle, opts.dry_run)
+        collect_lock_component_artifacts(&pack_lock, &opts.runtime, opts.bundle, opts.dry_run)
             .await?;
+
+    let mut bundled_paths = BTreeMap::new();
+    for entry in &build.lock_components {
+        bundled_paths.insert(entry.component_id.clone(), entry.logical_path.clone());
+    }
 
     let materialized = materialize_flow_components(
         &opts.pack_dir,
@@ -224,7 +231,7 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
     build.manifest.extensions = merge_component_sources_extension(
         build.manifest.extensions,
         &pack_lock,
-        opts.bundle,
+        &bundled_paths,
         materialized.manifest_paths.as_ref(),
     )?;
     if !opts.dry_run {
@@ -292,6 +299,7 @@ struct ComponentBinary {
 
 #[derive(Clone)]
 struct LockComponentBinary {
+    component_id: String,
     logical_path: String,
     source: PathBuf,
 }
@@ -939,7 +947,7 @@ fn map_extra_files(
         }
         if !logical.contains('/') {
             if is_reserved_source_file(logical) {
-                if dev_mode {
+                if dev_mode || logical == "pack.lock.cbor" {
                     mapped.push((logical.to_string(), extra.source.clone()));
                 }
                 continue;
@@ -964,7 +972,7 @@ fn is_reserved_source_file(path: &str) -> bool {
         path,
         "pack.yaml"
             | "pack.manifest.json"
-            | "pack.lock.json"
+            | "pack.lock.cbor"
             | "manifest.json"
             | "manifest.cbor"
             | "sbom.json"
@@ -1024,52 +1032,48 @@ fn merge_component_manifest_extension(
 fn merge_component_sources_extension(
     extensions: Option<BTreeMap<String, ExtensionRef>>,
     lock: &greentic_pack::pack_lock::PackLockV1,
-    _bundle: BundleMode,
+    bundled_paths: &BTreeMap<String, String>,
     manifest_paths: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Result<Option<BTreeMap<String, ExtensionRef>>> {
     let mut entries = Vec::new();
-    for comp in &lock.components {
-        if comp.r#ref.starts_with("file://") {
+    for comp in lock.components.values() {
+        let Some(reference) = comp.r#ref.as_ref() else {
+            continue;
+        };
+        if reference.starts_with("file://") {
             continue;
         }
-        let source = match ComponentSourceRef::from_str(&comp.r#ref) {
+        let source = match ComponentSourceRef::from_str(reference) {
             Ok(parsed) => parsed,
             Err(_) => {
                 eprintln!(
                     "warning: skipping pack.lock entry `{}` with unsupported ref {}",
-                    comp.name, comp.r#ref
+                    comp.component_id, reference
                 );
                 continue;
             }
         };
-        let manifest_path = manifest_paths.and_then(|paths| {
-            comp.component_id
-                .as_ref()
-                .map(|id| id.as_str())
-                .and_then(|key| paths.get(key))
-                .or_else(|| paths.get(&comp.name))
-                .cloned()
-        });
-        let artifact = if comp.bundled {
-            let wasm_path = comp.bundled_path.clone().ok_or_else(|| {
-                anyhow!(
-                    "pack.lock entry {} marked bundled but missing bundled_path",
-                    comp.name
-                )
-            })?;
+        let manifest_path = manifest_paths.and_then(|paths| paths.get(&comp.component_id).cloned());
+        let artifact = if let Some(wasm_path) = bundled_paths.get(&comp.component_id) {
             ArtifactLocationV1::Inline {
-                wasm_path,
+                wasm_path: wasm_path.clone(),
                 manifest_path,
             }
         } else {
             ArtifactLocationV1::Remote
         };
         entries.push(ComponentSourceEntryV1 {
-            name: comp.name.clone(),
-            component_id: comp.component_id.clone(),
+            name: comp.component_id.clone(),
+            component_id: Some(ComponentId::new(comp.component_id.clone()).map_err(|err| {
+                anyhow!(
+                    "invalid component id {} in lock: {}",
+                    comp.component_id,
+                    err
+                )
+            })?),
             source,
             resolved: ResolvedComponentV1 {
-                digest: comp.digest.clone(),
+                digest: comp.resolved_digest.clone(),
                 signature: None,
                 signed_by: None,
             },
@@ -1235,6 +1239,10 @@ fn package_gtpack(
             component_wasm_paths.insert(format!("components/{}.wasm", comp.id));
         }
     }
+    let mut manifest_component_ids = BTreeSet::new();
+    for manifest in &build.component_manifest_files {
+        manifest_component_ids.insert(manifest.component_id.clone());
+    }
 
     let mut lock_components = build.lock_components.clone();
     lock_components.sort_by(|a, b| a.logical_path.cmp(&b.logical_path));
@@ -1255,6 +1263,14 @@ fn package_gtpack(
             "application/wasm",
         );
         write_zip_entry(&mut writer, &comp.logical_path, &bytes, options)?;
+
+        if manifest_component_ids.contains(&comp.component_id) {
+            let alias_path = format!("components/{}.wasm", comp.component_id);
+            if written_paths.insert(alias_path.clone()) {
+                record_sbom_entry(&mut sbom_entries, &alias_path, &bytes, "application/wasm");
+                write_zip_entry(&mut writer, &alias_path, &bytes, options)?;
+            }
+        }
     }
 
     let mut lock_manifests = build.component_manifest_files.clone();
@@ -1354,7 +1370,7 @@ fn package_gtpack(
 }
 
 async fn collect_lock_component_artifacts(
-    lock: &mut greentic_pack::pack_lock::PackLockV1,
+    lock: &greentic_pack::pack_lock::PackLockV1,
     runtime: &RuntimeContext,
     bundle: BundleMode,
     allow_missing: bool,
@@ -1368,84 +1384,81 @@ async fn collect_lock_component_artifacts(
 
     let mut artifacts = Vec::new();
     let mut seen_paths = BTreeSet::new();
-    for comp in &mut lock.components {
-        if comp.r#ref.starts_with("file://") {
-            comp.bundled = false;
-            comp.bundled_path = None;
-            comp.wasm_sha256 = None;
-            comp.resolved_digest = None;
+    for comp in lock.components.values() {
+        let Some(reference) = comp.r#ref.as_ref() else {
+            continue;
+        };
+        if reference.starts_with("file://") {
             continue;
         }
-        let parsed = ComponentSourceRef::from_str(&comp.r#ref).ok();
+        let parsed = ComponentSourceRef::from_str(reference).ok();
         let is_tag = parsed.as_ref().map(|r| r.is_tag()).unwrap_or(false);
         let should_bundle = is_tag || bundle == BundleMode::Cache;
         if !should_bundle {
-            comp.bundled = false;
-            comp.bundled_path = None;
-            comp.wasm_sha256 = None;
-            comp.resolved_digest = None;
             continue;
         }
 
         let resolved = if is_tag {
             let item = if runtime.network_policy() == NetworkPolicy::Offline {
-                dist.ensure_cached(&comp.digest).await.map_err(|err| {
-                    anyhow!(
-                        "tag ref {} must be bundled but cache is missing ({})",
-                        comp.r#ref,
-                        err
-                    )
-                })?
-            } else {
-                dist.resolve_ref(&comp.r#ref)
+                dist.ensure_cached(&comp.resolved_digest)
                     .await
-                    .map_err(|err| anyhow!("failed to resolve {}: {}", comp.r#ref, err))?
+                    .map_err(|err| {
+                        anyhow!(
+                            "tag ref {} must be bundled but cache is missing ({})",
+                            reference,
+                            err
+                        )
+                    })?
+            } else {
+                dist.resolve_ref(reference)
+                    .await
+                    .map_err(|err| anyhow!("failed to resolve {}: {}", reference, err))?
             };
             let cache_path = item.cache_path.clone().ok_or_else(|| {
-                anyhow!("tag ref {} resolved but cache path is missing", comp.r#ref)
+                anyhow!("tag ref {} resolved but cache path is missing", reference)
             })?;
-            ResolvedLockItem { item, cache_path }
+            ResolvedLockItem { cache_path }
         } else {
             let mut resolved = dist
-                .ensure_cached(&comp.digest)
+                .ensure_cached(&comp.resolved_digest)
                 .await
                 .ok()
                 .and_then(|item| item.cache_path.clone().map(|path| (item, path)));
             if resolved.is_none()
                 && runtime.network_policy() != NetworkPolicy::Offline
                 && !allow_missing
-                && comp.r#ref.starts_with("oci://")
+                && reference.starts_with("oci://")
             {
                 let item = dist
-                    .resolve_ref(&comp.r#ref)
+                    .resolve_ref(reference)
                     .await
-                    .map_err(|err| anyhow!("failed to resolve {}: {}", comp.r#ref, err))?;
+                    .map_err(|err| anyhow!("failed to resolve {}: {}", reference, err))?;
                 if let Some(path) = item.cache_path.clone() {
                     resolved = Some((item, path));
                 }
             }
-            let Some((item, path)) = resolved else {
+            let Some((_item, path)) = resolved else {
                 if runtime.network_policy() == NetworkPolicy::Offline {
+                    if allow_missing {
+                        eprintln!(
+                            "warning: component {} is not cached; skipping embed",
+                            comp.component_id
+                        );
+                        continue;
+                    }
                     anyhow::bail!(
                         "component {} requires network access ({}) but cache is missing; offline builds cannot download artifacts",
-                        comp.name,
-                        comp.r#ref
+                        comp.component_id,
+                        reference
                     );
                 }
                 eprintln!(
                     "warning: component {} is not cached; skipping embed",
-                    comp.name
+                    comp.component_id
                 );
-                comp.bundled = false;
-                comp.bundled_path = None;
-                comp.wasm_sha256 = None;
-                comp.resolved_digest = None;
                 continue;
             };
-            ResolvedLockItem {
-                item,
-                cache_path: path,
-            }
+            ResolvedLockItem { cache_path: path }
         };
 
         let cache_path = resolved.cache_path;
@@ -1455,35 +1468,15 @@ async fn collect_lock_component_artifacts(
         let logical_path = if is_tag {
             format!("blobs/sha256/{}.wasm", wasm_sha256)
         } else {
-            format!("components/{}.wasm", comp.name)
+            format!("components/{}.wasm", comp.component_id)
         };
-
-        comp.bundled = true;
-        comp.bundled_path = Some(logical_path.clone());
-        comp.wasm_sha256 = Some(wasm_sha256.clone());
-        if is_tag {
-            comp.digest = format!("sha256:{wasm_sha256}");
-            comp.resolved_digest = Some(resolved.item.digest.clone());
-        } else {
-            comp.resolved_digest = None;
-        }
 
         if seen_paths.insert(logical_path.clone()) {
             artifacts.push(LockComponentBinary {
+                component_id: comp.component_id.clone(),
                 logical_path: logical_path.clone(),
                 source: cache_path.clone(),
             });
-        }
-        if let Some(component_id) = comp.component_id.as_ref()
-            && comp.bundled
-        {
-            let alias_path = format!("components/{}.wasm", component_id.as_str());
-            if alias_path != logical_path && seen_paths.insert(alias_path.clone()) {
-                artifacts.push(LockComponentBinary {
-                    logical_path: alias_path,
-                    source: cache_path.clone(),
-                });
-            }
         }
     }
 
@@ -1491,7 +1484,6 @@ async fn collect_lock_component_artifacts(
 }
 
 struct ResolvedLockItem {
-    item: greentic_distributor_client::ResolvedArtifact,
     cache_path: PathBuf,
 }
 
@@ -1581,17 +1573,13 @@ fn materialize_flow_components(
     }
 
     let mut lock_by_id = BTreeMap::new();
-    let mut lock_by_name = BTreeMap::new();
-    for entry in &pack_lock.components {
-        if let Some(component_id) = entry.component_id.as_ref() {
-            lock_by_id.insert(component_id.as_str().to_string(), entry);
-        }
-        lock_by_name.insert(entry.name.clone(), entry);
+    for (key, entry) in &pack_lock.components {
+        lock_by_id.insert(key.clone(), entry);
     }
 
-    let mut bundle_sources = BTreeMap::new();
+    let mut bundle_sources_by_component = BTreeMap::new();
     for entry in lock_components {
-        bundle_sources.insert(entry.logical_path.clone(), entry.source.clone());
+        bundle_sources_by_component.insert(entry.component_id.clone(), entry.source.clone());
     }
 
     let mut materialized_components = Vec::new();
@@ -1603,50 +1591,39 @@ fn materialize_flow_components(
             continue;
         }
 
-        let lock_entry = lock_by_id
-            .get(&component_id)
-            .copied()
-            .or_else(|| lock_by_name.get(&component_id).copied());
+        let lock_entry = lock_by_id.get(&component_id).copied();
         let Some(lock_entry) = lock_entry else {
             handle_missing_component_manifest(&component_id, None, require_component_manifests)?;
             continue;
         };
-        if !lock_entry.bundled {
+        let bundled_source = bundle_sources_by_component.get(&component_id);
+        if bundled_source.is_none() {
             if require_component_manifests {
                 anyhow::bail!(
                     "component {} is not bundled; cannot materialize manifest without local artifacts",
-                    lock_entry.name
+                    lock_entry.component_id
                 );
             }
             eprintln!(
                 "warning: component {} is not bundled; pack will emit PACK_COMPONENT_NOT_EXPLICIT",
-                lock_entry.name
+                lock_entry.component_id
             );
             continue;
         }
 
-        let bundled_source = lock_entry
-            .bundled_path
-            .as_deref()
-            .and_then(|path| bundle_sources.get(path));
-        let manifest = load_component_manifest_for_lock(pack_dir, lock_entry, bundled_source)?;
+        let manifest =
+            load_component_manifest_for_lock(pack_dir, &lock_entry.component_id, bundled_source)?;
 
         let Some(manifest) = manifest else {
-            handle_missing_component_manifest(
-                &component_id,
-                Some(&lock_entry.name),
-                require_component_manifests,
-            )?;
+            handle_missing_component_manifest(&component_id, None, require_component_manifests)?;
             continue;
         };
 
-        if let Some(lock_id) = lock_entry.component_id.as_ref()
-            && manifest.id.as_str() != lock_id.as_str()
-        {
+        if manifest.id.as_str() != lock_entry.component_id.as_str() {
             anyhow::bail!(
                 "component manifest id {} does not match pack.lock component_id {}",
                 manifest.id.as_str(),
-                lock_id.as_str()
+                lock_entry.component_id.as_str()
             );
         }
 
@@ -1655,7 +1632,10 @@ fn materialize_flow_components(
             manifest.id.as_str().to_string(),
             manifest_file.manifest_path.clone(),
         );
-        manifest_paths.insert(lock_entry.name.clone(), manifest_file.manifest_path.clone());
+        manifest_paths.insert(
+            lock_entry.component_id.clone(),
+            manifest_file.manifest_path.clone(),
+        );
 
         materialized_components.push(manifest);
         manifest_files.push(manifest_file);
@@ -1692,15 +1672,11 @@ fn collect_flow_component_ids(flows: &[PackFlowEntry]) -> BTreeSet<String> {
 
 fn load_component_manifest_for_lock(
     pack_dir: &Path,
-    lock_entry: &greentic_pack::pack_lock::LockedComponent,
+    component_id: &str,
     bundled_source: Option<&PathBuf>,
 ) -> Result<Option<ComponentManifest>> {
     let mut search_paths = Vec::new();
-    if let Some(component_id) = lock_entry.component_id.as_ref() {
-        let id = component_id.as_str();
-        search_paths.extend(component_manifest_search_paths(pack_dir, id));
-    }
-    search_paths.extend(component_manifest_search_paths(pack_dir, &lock_entry.name));
+    search_paths.extend(component_manifest_search_paths(pack_dir, component_id));
     if let Some(source) = bundled_source
         && let Some(parent) = source.parent()
     {
@@ -1985,17 +1961,96 @@ mod tests {
     use crate::config::BootstrapConfig;
     use crate::runtime::resolve_runtime;
     use greentic_pack::pack_lock::{LockedComponent, PackLockV1};
+    use greentic_types::cbor::canonical;
+    use greentic_types::decode_pack_manifest;
     use greentic_types::flow::FlowKind;
-    use greentic_types::{ComponentId, decode_pack_manifest};
+    use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+    use greentic_types::schemas::component::v0_6_0::{
+        ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput,
+        ComponentRunOutput, schema_hash,
+    };
     use serde_json::json;
     use sha2::{Digest, Sha256};
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs::File;
     use std::io::Read;
     use std::path::Path;
     use std::{fs, path::PathBuf};
     use tempfile::tempdir;
     use zip::ZipArchive;
+
+    fn sample_hex(ch: char) -> String {
+        std::iter::repeat_n(ch, 64).collect()
+    }
+
+    fn sample_lock_component(
+        component_id: &str,
+        reference: Option<&str>,
+        digest_hex: char,
+    ) -> LockedComponent {
+        LockedComponent {
+            component_id: component_id.to_string(),
+            r#ref: reference.map(|value| value.to_string()),
+            abi_version: "0.6.0".to_string(),
+            resolved_digest: format!("sha256:{}", sample_hex(digest_hex)),
+            describe_hash: sample_hex(digest_hex),
+            operations: Vec::new(),
+            world: None,
+            component_version: None,
+            role: None,
+        }
+    }
+
+    fn write_describe_sidecar(wasm_path: &Path, component_id: &str) {
+        let input_schema = SchemaIr::String {
+            min_len: None,
+            max_len: None,
+            regex: None,
+            format: None,
+        };
+        let output_schema = SchemaIr::String {
+            min_len: None,
+            max_len: None,
+            regex: None,
+            format: None,
+        };
+        let config_schema = SchemaIr::Object {
+            properties: BTreeMap::new(),
+            required: Vec::new(),
+            additional: AdditionalProperties::Forbid,
+        };
+        let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+        let operation = ComponentOperation {
+            id: "run".to_string(),
+            display_name: None,
+            input: ComponentRunInput {
+                schema: input_schema,
+            },
+            output: ComponentRunOutput {
+                schema: output_schema,
+            },
+            defaults: BTreeMap::new(),
+            redactions: Vec::new(),
+            constraints: BTreeMap::new(),
+            schema_hash: hash,
+        };
+        let describe = ComponentDescribe {
+            info: ComponentInfo {
+                id: component_id.to_string(),
+                version: "0.1.0".to_string(),
+                role: "tool".to_string(),
+                display_name: None,
+            },
+            provided_capabilities: Vec::new(),
+            required_capabilities: Vec::new(),
+            metadata: BTreeMap::new(),
+            operations: vec![operation],
+            config_schema,
+        };
+        let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+        let describe_path = PathBuf::from(format!("{}.describe.cbor", wasm_path.display()));
+        fs::write(describe_path, bytes).expect("write describe cache");
+    }
 
     #[test]
     fn map_kind_accepts_known_values() {
@@ -2478,19 +2533,25 @@ mod tests {
 
     #[test]
     fn component_sources_extension_respects_bundle() {
-        let lock_tag = PackLockV1::new(vec![LockedComponent {
-            name: "demo.tagged".into(),
-            r#ref: "oci://ghcr.io/demo/component:1.0.0".into(),
-            digest: "sha256:deadbeef".into(),
-            component_id: None,
-            bundled: true,
-            bundled_path: Some("blobs/sha256/deadbeef.wasm".into()),
-            wasm_sha256: Some("deadbeef".repeat(8)),
-            resolved_digest: Some("sha256:deadbeef".into()),
-        }]);
+        let mut components = BTreeMap::new();
+        components.insert(
+            "demo.tagged".to_string(),
+            sample_lock_component(
+                "demo.tagged",
+                Some("oci://ghcr.io/demo/component:1.0.0"),
+                'a',
+            ),
+        );
+        let lock_tag = PackLockV1::new(components);
 
-        let ext_none = merge_component_sources_extension(None, &lock_tag, BundleMode::None, None)
-            .expect("ext");
+        let mut bundled_paths = BTreeMap::new();
+        bundled_paths.insert(
+            "demo.tagged".to_string(),
+            "blobs/sha256/deadbeef.wasm".to_string(),
+        );
+
+        let ext_none =
+            merge_component_sources_extension(None, &lock_tag, &bundled_paths, None).expect("ext");
         let value = match ext_none
             .unwrap()
             .get(EXT_COMPONENT_SOURCES_V1)
@@ -2505,19 +2566,19 @@ mod tests {
             ArtifactLocationV1::Inline { .. }
         ));
 
-        let lock_digest = PackLockV1::new(vec![LockedComponent {
-            name: "demo.component".into(),
-            r#ref: "oci://ghcr.io/demo/component@sha256:deadbeef".into(),
-            digest: "sha256:deadbeef".into(),
-            component_id: None,
-            bundled: false,
-            bundled_path: None,
-            wasm_sha256: None,
-            resolved_digest: None,
-        }]);
+        let mut components = BTreeMap::new();
+        components.insert(
+            "demo.component".to_string(),
+            sample_lock_component(
+                "demo.component",
+                Some("oci://ghcr.io/demo/component@sha256:deadbeef"),
+                'b',
+            ),
+        );
+        let lock_digest = PackLockV1::new(components);
 
         let ext_none =
-            merge_component_sources_extension(None, &lock_digest, BundleMode::None, None)
+            merge_component_sources_extension(None, &lock_digest, &BTreeMap::new(), None)
                 .expect("ext");
         let value = match ext_none
             .unwrap()
@@ -2533,19 +2594,25 @@ mod tests {
             ArtifactLocationV1::Remote
         ));
 
-        let lock_digest_bundled = PackLockV1::new(vec![LockedComponent {
-            name: "demo.component".into(),
-            r#ref: "oci://ghcr.io/demo/component@sha256:deadbeef".into(),
-            digest: "sha256:deadbeef".into(),
-            component_id: None,
-            bundled: true,
-            bundled_path: Some("components/demo.component.wasm".into()),
-            wasm_sha256: Some("deadbeef".repeat(8)),
-            resolved_digest: None,
-        }]);
+        let mut components = BTreeMap::new();
+        components.insert(
+            "demo.component".to_string(),
+            sample_lock_component(
+                "demo.component",
+                Some("oci://ghcr.io/demo/component@sha256:deadbeef"),
+                'c',
+            ),
+        );
+        let lock_digest_bundled = PackLockV1::new(components);
+
+        let mut bundled_paths = BTreeMap::new();
+        bundled_paths.insert(
+            "demo.component".to_string(),
+            "components/demo.component.wasm".to_string(),
+        );
 
         let ext_cache =
-            merge_component_sources_extension(None, &lock_digest_bundled, BundleMode::Cache, None)
+            merge_component_sources_extension(None, &lock_digest_bundled, &bundled_paths, None)
                 .expect("ext");
         let value = match ext_cache
             .unwrap()
@@ -2564,46 +2631,34 @@ mod tests {
 
     #[test]
     fn component_sources_extension_skips_file_refs() {
-        let lock = PackLockV1::new(vec![LockedComponent {
-            name: "local.component".into(),
-            r#ref: "file:///tmp/component.wasm".into(),
-            digest: "sha256:deadbeef".into(),
-            component_id: None,
-            bundled: false,
-            bundled_path: None,
-            wasm_sha256: None,
-            resolved_digest: None,
-        }]);
+        let mut components = BTreeMap::new();
+        components.insert(
+            "local.component".to_string(),
+            sample_lock_component("local.component", Some("file:///tmp/component.wasm"), 'd'),
+        );
+        let lock = PackLockV1::new(components);
 
         let ext_none =
-            merge_component_sources_extension(None, &lock, BundleMode::Cache, None).expect("ext");
+            merge_component_sources_extension(None, &lock, &BTreeMap::new(), None).expect("ext");
         assert!(ext_none.is_none(), "file refs should be omitted");
 
-        let lock = PackLockV1::new(vec![
-            LockedComponent {
-                name: "local.component".into(),
-                r#ref: "file:///tmp/component.wasm".into(),
-                digest: "sha256:deadbeef".into(),
-                component_id: None,
-                bundled: false,
-                bundled_path: None,
-                wasm_sha256: None,
-                resolved_digest: None,
-            },
-            LockedComponent {
-                name: "remote.component".into(),
-                r#ref: "oci://ghcr.io/demo/component:2.0.0".into(),
-                digest: "sha256:cafebabe".into(),
-                component_id: None,
-                bundled: false,
-                bundled_path: None,
-                wasm_sha256: None,
-                resolved_digest: None,
-            },
-        ]);
+        let mut components = BTreeMap::new();
+        components.insert(
+            "local.component".to_string(),
+            sample_lock_component("local.component", Some("file:///tmp/component.wasm"), 'e'),
+        );
+        components.insert(
+            "remote.component".to_string(),
+            sample_lock_component(
+                "remote.component",
+                Some("oci://ghcr.io/demo/component:2.0.0"),
+                'f',
+            ),
+        );
+        let lock = PackLockV1::new(components);
 
         let ext_some =
-            merge_component_sources_extension(None, &lock, BundleMode::None, None).expect("ext");
+            merge_component_sources_extension(None, &lock, &BTreeMap::new(), None).expect("ext");
         let value = match ext_some
             .unwrap()
             .get(EXT_COMPONENT_SOURCES_V1)
@@ -2656,6 +2711,7 @@ nodes:
                 .join("component.wasm");
             fs::create_dir_all(cache_path.parent().expect("cache parent")).expect("cache dir");
             fs::write(&cache_path, cached_bytes).expect("write cached");
+            write_describe_sidecar(&cache_path, "dummy.component");
 
             let summary = serde_json::json!({
                 "schema_version": 1,
@@ -2719,7 +2775,7 @@ flows:
                 manifest_out: pack_dir.join("dist/manifest.cbor"),
                 sbom_out: None,
                 gtpack_out: Some(pack_dir.join("dist/pack.gtpack")),
-                lock_path: pack_dir.join("pack.lock.json"),
+                lock_path: pack_dir.join("pack.lock.cbor"),
                 bundle: BundleMode::Cache,
                 dry_run: false,
                 secrets_req: None,
@@ -2738,7 +2794,7 @@ flows:
             let mut archive = ZipArchive::new(File::open(&gtpack_path).expect("open gtpack"))
                 .expect("read gtpack");
             assert!(
-                archive.by_name("components/main___call.wasm").is_ok(),
+                archive.by_name("components/dummy.component.wasm").is_ok(),
                 "missing lock component artifact in gtpack"
             );
         });
@@ -2841,7 +2897,7 @@ flows:
                 manifest_out: pack_dir.join("dist/manifest.cbor"),
                 sbom_out: None,
                 gtpack_out: Some(pack_dir.join("dist/pack.gtpack")),
-                lock_path: pack_dir.join("pack.lock.json"),
+                lock_path: pack_dir.join("pack.lock.cbor"),
                 bundle: BundleMode::Cache,
                 dry_run: false,
                 secrets_req: None,
@@ -2861,7 +2917,9 @@ flows:
                 ZipArchive::new(File::open(&gtpack_path).expect("open gtpack"))
                     .expect("read gtpack");
             assert!(
-                archive.by_name("components/main___call.wasm").is_ok(),
+                archive
+                    .by_name("components/dummy.component.wasm")
+                    .is_ok(),
                 "missing lock component artifact in gtpack"
             );
         });
@@ -3031,25 +3089,30 @@ flows:
         let runtime = resolve_runtime(Some(project_root), Some(cache_dir.as_path()), true, None)
             .expect("resolve runtime");
 
-        let mut lock = PackLockV1::new(vec![LockedComponent {
-            name: "remote".to_string(),
-            r#ref: "oci://example/remote@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
-            digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                .to_string(),
-            component_id: Some(ComponentId::new("remote.component").expect("valid component id")),
-            bundled: false,
-            bundled_path: None,
-            wasm_sha256: None,
-            resolved_digest: None,
-        }]);
+        let mut components = BTreeMap::new();
+        components.insert(
+            "remote.component".to_string(),
+            LockedComponent {
+                component_id: "remote.component".to_string(),
+                r#ref: Some("oci://example/remote@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string()),
+                abi_version: "0.6.0".to_string(),
+                resolved_digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+                describe_hash: sample_hex('a'),
+                operations: Vec::new(),
+                world: None,
+                component_version: None,
+                role: None,
+            },
+        );
+        let lock = PackLockV1::new(components);
 
-        let err =
-            match collect_lock_component_artifacts(&mut lock, &runtime, BundleMode::Cache, false)
-                .await
-            {
-                Ok(_) => panic!("expected offline build to fail without cached component"),
-                Err(err) => err,
-            };
+        let err = match collect_lock_component_artifacts(&lock, &runtime, BundleMode::Cache, false)
+            .await
+        {
+            Ok(_) => panic!("expected offline build to fail without cached component"),
+            Err(err) => err,
+        };
         let msg = err.to_string();
         assert!(
             msg.contains("requires network access"),

@@ -3,7 +3,7 @@
   "nodes": {
     "call_llm": {
       "component_id": "llm.openai.chat",
-      "digest": "sha256:deadbeef",
+      "digest": "sha256:d99ca88d933443a8b61ee1fd0384ff41707fb2b7649f095ed580de7022d5f560",
       "source": {
         "kind": "repo",
         "ref": "io.3bridges.components.llm.openai@1.0.0"
@@ -11,7 +11,7 @@
     },
     "package_messages": {
       "component_id": "flow.return",
-      "digest": "sha256:deadbeef",
+      "digest": "sha256:aefca871003e638dad372c4386f9730167d56422725e0b1cea81e1fbd82309e0",
       "source": {
         "kind": "repo",
         "ref": "io.3bridges.components.flow@1.0.0"

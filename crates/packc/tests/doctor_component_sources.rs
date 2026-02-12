@@ -1,6 +1,13 @@
+use greentic_types::cbor::canonical;
 use greentic_types::pack::extensions::component_sources::EXT_COMPONENT_SOURCES_V1;
+use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
+use greentic_types::schemas::component::v0_6_0::{
+    ComponentDescribe, ComponentInfo, ComponentOperation, ComponentRunInput, ComponentRunOutput,
+    schema_hash,
+};
 use greentic_types::{PackManifest, decode_pack_manifest, encode_pack_manifest};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -73,6 +80,65 @@ flows:
     fs::write(dir.join("pack.yaml"), pack_yaml).expect("pack.yaml");
 }
 
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str, version: &str) {
+    let input_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let output_schema = SchemaIr::String {
+        min_len: None,
+        max_len: None,
+        regex: None,
+        format: None,
+    };
+    let config_schema = SchemaIr::Object {
+        properties: BTreeMap::new(),
+        required: Vec::new(),
+        additional: AdditionalProperties::Forbid,
+    };
+    let hash = schema_hash(&input_schema, &output_schema, &config_schema).expect("schema hash");
+    let operation = ComponentOperation {
+        id: "run".to_string(),
+        display_name: None,
+        input: ComponentRunInput {
+            schema: input_schema,
+        },
+        output: ComponentRunOutput {
+            schema: output_schema,
+        },
+        defaults: BTreeMap::new(),
+        redactions: Vec::new(),
+        constraints: BTreeMap::new(),
+        schema_hash: hash,
+    };
+    let describe = ComponentDescribe {
+        info: ComponentInfo {
+            id: component_id.to_string(),
+            version: version.to_string(),
+            role: "tool".to_string(),
+            display_name: None,
+        },
+        provided_capabilities: Vec::new(),
+        required_capabilities: Vec::new(),
+        metadata: BTreeMap::new(),
+        operations: vec![operation],
+        config_schema,
+    };
+    let bytes = canonical::to_canonical_cbor_allow_floats(&describe).expect("encode describe");
+    let describe_path = format!("{}.describe.cbor", wasm_path.display());
+    fs::write(describe_path, bytes).expect("write describe cache");
+}
+
+fn cache_component(cache_dir: &Path, digest: &str) {
+    let dir = cache_dir.join(digest.trim_start_matches("sha256:"));
+    fs::create_dir_all(&dir).expect("cache dir");
+    let wasm_path = dir.join("component.wasm");
+    fs::write(&wasm_path, b"cached-component").expect("write wasm");
+    write_describe_sidecar(&wasm_path, "ai.greentic.component-templates", "0.1.0");
+}
+
 fn rewrite_manifest_without_component_sources(src: &Path, dest: &Path) {
     let src_file = File::open(src).expect("open source gtpack");
     let mut archive = ZipArchive::new(src_file).expect("open zip");
@@ -109,15 +175,24 @@ fn doctor_accepts_remote_component_sources() {
     let temp = tempdir().expect("temp dir");
     write_pack(temp.path());
     let gtpack_out = temp.path().join("dist/pack.gtpack");
+    let cache_dir = temp.path().join("cache");
+    cache_component(
+        &cache_dir,
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    );
 
     let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "build",
             "--in",
             temp.path().to_str().unwrap(),
             "--gtpack-out",
             gtpack_out.to_str().unwrap(),
+            "--cache-dir",
+            cache_dir.to_str().unwrap(),
+            "--offline",
             "--bundle",
             "none",
             "--no-update",
@@ -158,15 +233,24 @@ fn doctor_rejects_missing_component_sources() {
     let temp = tempdir().expect("temp dir");
     write_pack(temp.path());
     let gtpack_out = temp.path().join("dist/pack.gtpack");
+    let cache_dir = temp.path().join("cache");
+    cache_component(
+        &cache_dir,
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    );
 
     let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
         .current_dir(workspace_root())
+        .env("GREENTIC_PACK_USE_DESCRIBE_CACHE", "1")
         .args([
             "build",
             "--in",
             temp.path().to_str().unwrap(),
             "--gtpack-out",
             gtpack_out.to_str().unwrap(),
+            "--cache-dir",
+            cache_dir.to_str().unwrap(),
+            "--offline",
             "--bundle",
             "none",
             "--no-update",

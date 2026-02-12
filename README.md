@@ -58,7 +58,7 @@ For the full taxonomy and rules, see:
 ## How packs work (short version)
 
 1. Author a `pack.yaml` and flows (`.ygtc`).
-2. Resolve component sources into `pack.lock.json`.
+2. Resolve component sources into `pack.lock.cbor`.
 3. Build a canonical `.gtpack` that embeds the manifest, SBOM, and assets.
 4. Distribute the `.gtpack` and inspect it with `greentic-pack doctor` or
    derive a deployment plan with `greentic-pack plan`.
