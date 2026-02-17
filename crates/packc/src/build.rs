@@ -593,22 +593,27 @@ fn load_component_manifest_from_disk(
             .map(Path::to_path_buf)
             .ok_or_else(|| anyhow!("component path {} has no parent directory", path.display()))?
     };
-    let mut candidates = vec![
-        manifest_dir.join("component.manifest.cbor"),
-        manifest_dir.join("component.manifest.json"),
-        manifest_dir.join("component.json"),
-    ];
-    let id_manifest_suffix = format!("{}.manifest", component_id);
-    candidates.push(manifest_dir.join(format!("{id_manifest_suffix}.cbor")));
-    candidates.push(manifest_dir.join(format!("{id_manifest_suffix}.json")));
-    candidates.push(manifest_dir.join(format!("{component_id}.json")));
+    let id_manifest_suffix = format!("{component_id}.manifest");
 
-    for manifest_path in candidates {
-        if !manifest_path.exists() {
-            continue;
+    // Search near the wasm artifact first, then walk up parent directories.
+    // This supports components built into nested target/*/release paths where
+    // component.manifest.json lives at the component root.
+    for dir in std::iter::successors(Some(manifest_dir.as_path()), |d| d.parent()) {
+        let candidates = [
+            dir.join("component.manifest.cbor"),
+            dir.join("component.manifest.json"),
+            dir.join("component.json"),
+            dir.join(format!("{id_manifest_suffix}.cbor")),
+            dir.join(format!("{id_manifest_suffix}.json")),
+            dir.join(format!("{component_id}.json")),
+        ];
+        for manifest_path in candidates {
+            if !manifest_path.exists() {
+                continue;
+            }
+            let manifest = load_component_manifest_from_file(&manifest_path)?;
+            return Ok(Some(manifest));
         }
-        let manifest = load_component_manifest_from_file(&manifest_path)?;
-        return Ok(Some(manifest));
     }
 
     Ok(None)
@@ -2200,6 +2205,23 @@ mod tests {
             load_component_manifest_from_disk(&wasm, "component").expect("load manifest");
         let manifest = manifest.expect("manifest present");
         assert_eq!(manifest.id.to_string(), "component");
+    }
+
+    #[test]
+    fn load_component_manifest_from_disk_walks_up_from_nested_target_paths() {
+        let temp = tempdir().expect("temp dir");
+        let component_root = temp.path().join("components/demo-component");
+        let release_dir = component_root.join("target/wasm32-wasip2/release");
+        fs::create_dir_all(&release_dir).expect("create release dir");
+        let wasm = release_dir.join("demo_component.wasm");
+        fs::write(&wasm, b"wasm").expect("write wasm");
+        let manifest_name = component_root.join("component.manifest.cbor");
+        write_sample_manifest(&manifest_name, "dev.local.demo-component");
+
+        let manifest = load_component_manifest_from_disk(&wasm, "dev.local.demo-component")
+            .expect("load manifest");
+        let manifest = manifest.expect("manifest present");
+        assert_eq!(manifest.id.to_string(), "dev.local.demo-component");
     }
 
     #[test]
