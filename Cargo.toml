@@ -65,7 +65,7 @@ assert_cmd = "2"
 indoc = "2"
 predicates = "3"
 wit-bindgen = { version = "0.52", default-features = false, features = ["macros", "realloc"] }
-indexmap = "2"
+indexmap = "=2.12.1"
 
 [patch.crates-io]
 serde_yaml_bw = { path = "crates/vendor/serde_yaml_bw" }
