@@ -99,7 +99,7 @@ impl QaModeLabel {
         match self {
             QaModeLabel::Default => HostQaMode::Default,
             QaModeLabel::Setup => HostQaMode::Setup,
-            QaModeLabel::Update | QaModeLabel::Upgrade => HostQaMode::Upgrade,
+            QaModeLabel::Update | QaModeLabel::Upgrade => HostQaMode::Update,
             QaModeLabel::Remove => HostQaMode::Remove,
         }
     }
@@ -969,7 +969,7 @@ fn load_component_qa_spec(
 ) -> Result<ComponentQaSpec> {
     let component =
         WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState);
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
@@ -981,7 +981,7 @@ fn load_component_qa_spec(
 fn load_component_describe(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
     let component =
         WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState);
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
@@ -999,7 +999,7 @@ fn apply_component_answers(
 ) -> Result<Vec<u8>> {
     let component =
         WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState);
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)

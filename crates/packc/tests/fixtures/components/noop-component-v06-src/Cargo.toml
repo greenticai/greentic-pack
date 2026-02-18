@@ -1,0 +1,13 @@
+[package]
+name = "noop-component-v06"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+greentic-interfaces-guest = { version = "0.4", default-features = false, features = ["component-v0-6"] }
+
+[workspace]

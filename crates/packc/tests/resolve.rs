@@ -62,6 +62,33 @@ flows:
     fs::write(dir.join("pack.yaml"), pack_yaml).unwrap();
 }
 
+fn build_wasip2_noop_component_v06(target_dir: &Path) -> PathBuf {
+    let fixture_dir =
+        workspace_root().join("crates/packc/tests/fixtures/components/noop-component-v06-src");
+    let output = Command::new("cargo")
+        .current_dir(&fixture_dir)
+        .env("CARGO_TARGET_DIR", target_dir)
+        .args([
+            "build",
+            "--target",
+            "wasm32-wasip2",
+            "--release",
+            "--offline",
+        ])
+        .output()
+        .expect("spawn cargo build for noop component fixture");
+    assert!(
+        output.status.success(),
+        "failed to build noop component fixture:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    target_dir
+        .join("wasm32-wasip2")
+        .join("release")
+        .join("noop_component_v06.wasm")
+}
+
 fn write_pack_with_local_summary(dir: &Path, wasm_contents: &[u8]) {
     let flows_dir = dir.join("flows");
     fs::create_dir_all(&flows_dir).unwrap();
@@ -395,4 +422,78 @@ flows:
         ])
         .assert()
         .success();
+}
+
+#[test]
+fn resolve_offline_accepts_wasip2_component_with_wasi_cli_imports() {
+    let temp = TempDir::new().expect("temp dir");
+    let pack_dir = temp.path().to_path_buf();
+
+    let built_wasm = build_wasip2_noop_component_v06(&pack_dir.join(".fixture-target"));
+    let wasm_bytes = fs::read(&built_wasm).expect("read built fixture wasm");
+
+    let flows_dir = pack_dir.join("flows");
+    fs::create_dir_all(&flows_dir).unwrap();
+    let flow_path = flows_dir.join("main.ygtc");
+    fs::write(&flow_path, "id: main\nentry: start\n").unwrap();
+
+    let wasm_path = pack_dir.join("components").join("noop_component_v06.wasm");
+    fs::create_dir_all(wasm_path.parent().unwrap()).unwrap();
+    fs::write(&wasm_path, wasm_bytes).unwrap();
+
+    let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&wasm_path).unwrap()));
+    let summary = serde_json::json!({
+        "schema_version": 1,
+        "flow": "main.ygtc",
+        "nodes": {
+            "call": {
+                "component_id": "dev.local.component",
+                "source": {
+                    "kind": "local",
+                    "path": "../components/noop_component_v06.wasm"
+                },
+                "digest": digest
+            }
+        }
+    });
+    fs::write(
+        flow_path.with_extension("ygtc.resolve.summary.json"),
+        serde_json::to_vec_pretty(&summary).unwrap(),
+    )
+    .unwrap();
+
+    let pack_yaml = r#"pack_id: demo.pack
+version: 0.1.0
+kind: application
+publisher: demo
+flows:
+  - id: main
+    file: flows/main.ygtc
+"#;
+    fs::write(pack_dir.join("pack.yaml"), pack_yaml).unwrap();
+
+    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+        .current_dir(workspace_root())
+        .args([
+            "--offline",
+            "resolve",
+            "--in",
+            pack_dir.to_str().unwrap(),
+            "--log",
+            "warn",
+        ])
+        .assert()
+        .success();
+
+    let lock_path = pack_dir.join("pack.lock.cbor");
+    let lock = greentic_pack::pack_lock::read_pack_lock(&lock_path).expect("lock file");
+    let entry = lock
+        .components
+        .get("dev.local.component")
+        .expect("component entry");
+    assert_eq!(entry.component_id, "dev.local.component");
+    assert!(
+        !entry.describe_hash.is_empty(),
+        "describe hash should be populated from component describe()"
+    );
 }

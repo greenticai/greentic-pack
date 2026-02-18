@@ -349,7 +349,7 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
             &mut has_errors,
         );
 
-        let mut store = wasmtime::Store::new(&engine, DescribeHostState);
+        let mut store = wasmtime::Store::new(&engine, DescribeHostState::default());
         let mut linker = Linker::new(&engine);
         add_describe_host_imports(&mut linker)?;
         let component = match WasmtimeComponent::from_binary(&engine, &wasm.bytes) {
@@ -407,7 +407,7 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
         let qa_modes = [
             (QaMode::Default, "default"),
             (QaMode::Setup, "setup"),
-            (QaMode::Upgrade, "update"),
+            (QaMode::Update, "update"),
             (QaMode::Remove, "remove"),
         ];
         let mut qa_i18n_keys = BTreeSet::new();
@@ -712,7 +712,7 @@ fn describe_component_with_cache(
 fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
     let component =
         WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState);
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance = linker
@@ -754,7 +754,7 @@ fn should_fallback_to_untyped_describe(err: &anyhow::Error) -> bool {
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
     let component =
         WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState);
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
