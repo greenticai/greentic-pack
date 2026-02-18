@@ -519,7 +519,7 @@ fn describe_component(
             return Err(err).context("decode component bytes");
         }
     };
-    let mut store = wasmtime::Store::new(engine, DescribeHostState);
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
