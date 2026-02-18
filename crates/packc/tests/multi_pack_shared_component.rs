@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-const COMPONENT_ID: &str = "shared.component";
+const COMPONENT_WASM_BASENAME: &str = "shared.component";
 const OPERATION: &str = "handle_message";
 
 fn workspace_root() -> PathBuf {
@@ -55,7 +55,7 @@ fn online() -> bool {
 fn link_shared_component(wasm_src: &Path, pack_dir: &Path) -> PathBuf {
     let dest = pack_dir
         .join("components")
-        .join(format!("{COMPONENT_ID}.wasm"));
+        .join(format!("{COMPONENT_WASM_BASENAME}.wasm"));
     fs::create_dir_all(dest.parent().unwrap()).expect("components dir");
     if dest.exists() {
         fs::remove_file(&dest).expect("remove existing link");
@@ -66,11 +66,11 @@ fn link_shared_component(wasm_src: &Path, pack_dir: &Path) -> PathBuf {
     dest
 }
 
-fn write_pack_files(pack_dir: &Path, wasm_src: &Path, pack_name: &str) {
+fn write_pack_files(pack_dir: &Path, wasm_src: &Path, pack_name: &str, component_id: &str) {
     fs::create_dir_all(pack_dir.join("flows")).expect("pack flow dir");
     let component_path = link_shared_component(wasm_src, pack_dir);
-    write_describe_sidecar(&component_path);
-    write_summary(pack_dir, wasm_src);
+    write_describe_sidecar(&component_path, component_id);
+    write_summary(pack_dir, wasm_src, component_id);
 
     let pack_yaml = format!(
         r#"pack_id: dev.local.{pack_name}
@@ -79,7 +79,7 @@ kind: application
 publisher: Test
 
 components:
-  - id: "{COMPONENT_ID}"
+  - id: "{component_id}"
     version: "0.1.0"
     world: "greentic:component/component@0.5.0"
     supports: ["messaging"]
@@ -132,7 +132,7 @@ nodes:
     fs::write(pack_dir.join("flows").join("main.ygtc"), flow).expect("flow file");
 }
 
-fn write_describe_sidecar(wasm_path: &Path) {
+fn write_describe_sidecar(wasm_path: &Path, component_id: &str) {
     let input_schema = SchemaIr::Object {
         properties: BTreeMap::new(),
         required: Vec::new(),
@@ -165,7 +165,7 @@ fn write_describe_sidecar(wasm_path: &Path) {
     };
     let describe = ComponentDescribe {
         info: ComponentInfo {
-            id: "ai.greentic.shared-component".to_string(),
+            id: component_id.to_string(),
             version: "0.1.0".to_string(),
             role: "tool".to_string(),
             display_name: None,
@@ -181,7 +181,7 @@ fn write_describe_sidecar(wasm_path: &Path) {
     fs::write(describe_path, bytes).expect("write describe cache");
 }
 
-fn write_summary(pack_dir: &Path, wasm_src: &Path) {
+fn write_summary(pack_dir: &Path, wasm_src: &Path, component_id: &str) {
     let summary_path = pack_dir.join("flows/main.ygtc.resolve.summary.json");
     let parent = summary_path.parent().expect("summary parent");
     fs::create_dir_all(parent).expect("summary dir");
@@ -196,7 +196,7 @@ fn write_summary(pack_dir: &Path, wasm_src: &Path) {
         "flow": "main.ygtc",
         "nodes": {
             "call": {
-                "component_id": "ai.greentic.shared-component",
+                "component_id": component_id,
                 "source": {
                     "kind": "local",
                     "path": rel_path
@@ -210,6 +210,15 @@ fn write_summary(pack_dir: &Path, wasm_src: &Path) {
         serde_json::to_vec_pretty(&doc).expect("serialize summary"),
     )
     .expect("write summary");
+}
+
+fn read_component_id(manifest_path: &Path) -> String {
+    let raw = fs::read_to_string(manifest_path).expect("read component manifest");
+    let json: serde_json::Value = serde_json::from_str(&raw).expect("parse component manifest");
+    json.get("id")
+        .and_then(|v| v.as_str())
+        .expect("component manifest missing id")
+        .to_string()
 }
 
 fn build_pack(pack_dir: &Path, gtpack_name: &str) -> (PathBuf, PathBuf) {
@@ -327,6 +336,7 @@ fn multi_pack_shared_component_has_operation_binding() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let component_id = read_component_id(&shared_component_dir.join("component.manifest.json"));
 
     let wasm_path = shared_component_dir.join("target/wasm32-wasip2/release/shared_component.wasm");
     assert!(
@@ -337,8 +347,8 @@ fn multi_pack_shared_component_has_operation_binding() {
 
     let pack_a = temp.path().join("pack-a");
     let pack_b = temp.path().join("pack-b");
-    write_pack_files(&pack_a, &wasm_path, "pack-a");
-    write_pack_files(&pack_b, &wasm_path, "pack-b");
+    write_pack_files(&pack_a, &wasm_path, "pack-a", &component_id);
+    write_pack_files(&pack_b, &wasm_path, "pack-b", &component_id);
 
     build_pack(&pack_a, "pack-a.gtpack");
     let (manifest_b, gtpack_b) = build_pack(&pack_b, "pack-b.gtpack");
