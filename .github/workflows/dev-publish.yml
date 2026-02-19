@@ -70,9 +70,9 @@ jobs:
           print(f"Generated {cfg} with {len(candidates)} patches")
           PY
 
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
-          toolchain: 1.90.0
+          toolchain: 1.91.0
           override: true
           components: rustfmt, clippy
       - name: Ensure cargo-binstall
@@ -175,9 +175,9 @@ jobs:
           print(f"Generated {cfg} with {len(candidates)} patches")
           PY
 
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
-          toolchain: 1.90.0
+          toolchain: 1.91.0
           override: true
           targets: ${{ matrix.target }}
 
@@ -213,6 +213,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload latest-dev ${{ steps.package.outputs.artifact }} --clobber
+
 
 
 
