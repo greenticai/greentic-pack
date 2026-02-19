@@ -30,7 +30,7 @@ jobs:
       - name: Fetch open Dependabot alerts
         id: alerts
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           MAX_ALERTS: ${{ github.event.inputs.max_alerts }}
