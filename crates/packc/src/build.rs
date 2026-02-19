@@ -1743,12 +1743,16 @@ fn collect_flow_component_ids(flows: &[PackFlowEntry]) -> BTreeSet<String> {
                 continue;
             }
             let id = node.component.id.as_str();
-            if !id.is_empty() {
+            if !id.is_empty() && !is_builtin_component_id(id) {
                 ids.insert(id.to_string());
             }
         }
     }
     ids
+}
+
+fn is_builtin_component_id(id: &str) -> bool {
+    matches!(id, "session.wait" | "flow.call" | "provider.invoke") || id.starts_with("emit.")
 }
 
 fn load_component_manifest_for_lock(

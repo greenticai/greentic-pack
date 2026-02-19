@@ -18,6 +18,11 @@ fn workspace_root() -> PathBuf {
         .join("..")
 }
 
+fn has_host_error_wit_mismatch(output: &str) -> bool {
+    output.contains("type `host-error` not defined in interface")
+        || output.contains("type 'host-error' not defined in interface")
+}
+
 fn write_pack(dir: &Path, wasm_contents: &[u8]) {
     let flows_dir = dir.join("flows");
     fs::create_dir_all(&flows_dir).unwrap();
@@ -89,35 +94,42 @@ fn build_wasip2_noop_component_v06(target_dir: &Path) -> Result<PathBuf, String>
                 .output()
                 .expect("spawn online cargo build for noop component fixture");
             if !online_output.status.success() {
-                let online_stdout = String::from_utf8_lossy(&online_output.stdout);
                 let online_stderr = String::from_utf8_lossy(&online_output.stderr);
-                let external_mismatch = online_stderr.contains("greentic-interfaces-guest")
-                    || online_stderr.contains("greentic-types")
-                    || online_stdout.contains("greentic-interfaces-guest")
-                    || online_stdout.contains("greentic-types");
-                if external_mismatch {
+                let online_stdout = String::from_utf8_lossy(&online_output.stdout);
+                let combined = format!(
+                    "{}\n{}\n{}\n{}",
+                    String::from_utf8_lossy(&offline_output.stdout),
+                    offline_stderr,
+                    online_stdout,
+                    online_stderr
+                );
+                if has_host_error_wit_mismatch(&combined) {
                     return Err(format!(
-                        "external fixture dependency mismatch while building noop component fixture\noffline stdout={}\noffline stderr={}\nonline stdout={}\nonline stderr={}",
-                        String::from_utf8_lossy(&offline_output.stdout),
-                        offline_stderr,
-                        online_stdout,
-                        online_stderr
+                        "external greentic-interfaces guest WIT mismatch while building noop fixture (offline+online):\n{}",
+                        combined
                     ));
                 }
-                return Err(format!(
+                panic!(
                     "failed to build noop component fixture (offline then online fallback):\noffline stdout={}\noffline stderr={}\nonline stdout={}\nonline stderr={}",
                     String::from_utf8_lossy(&offline_output.stdout),
                     offline_stderr,
                     online_stdout,
                     online_stderr
-                ));
+                );
             }
         } else {
-            return Err(format!(
+            let offline_stdout = String::from_utf8_lossy(&offline_output.stdout);
+            let combined = format!("{offline_stdout}\n{offline_stderr}");
+            if has_host_error_wit_mismatch(&combined) {
+                return Err(format!(
+                    "external greentic-interfaces guest WIT mismatch while building noop fixture (offline):\n{}",
+                    combined
+                ));
+            }
+            panic!(
                 "failed to build noop component fixture:\nstdout={}\nstderr={}",
-                String::from_utf8_lossy(&offline_output.stdout),
-                offline_stderr
-            ));
+                offline_stdout, offline_stderr
+            );
         }
     }
     Ok(target_dir
@@ -468,9 +480,9 @@ fn resolve_offline_accepts_wasip2_component_with_wasi_cli_imports() {
 
     let built_wasm = match build_wasip2_noop_component_v06(&pack_dir.join(".fixture-target")) {
         Ok(path) => path,
-        Err(err) => {
+        Err(reason) => {
             eprintln!(
-                "skipping resolve_offline_accepts_wasip2_component_with_wasi_cli_imports: {err}"
+                "skipping resolve_offline_accepts_wasip2_component_with_wasi_cli_imports: {reason}"
             );
             return;
         }

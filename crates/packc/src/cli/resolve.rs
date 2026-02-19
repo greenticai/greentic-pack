@@ -5,9 +5,6 @@ use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use crate::config::load_pack_config;
-use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
-use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use greentic_distributor_client::{DistClient, DistOptions};
@@ -21,6 +18,9 @@ use hex;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
+use crate::config::load_pack_config;
+use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
+use crate::runtime::RuntimeContext;
 
 #[derive(Debug, Args)]
 pub struct ResolveArgs {
@@ -147,6 +147,16 @@ async fn populate_component_contract(
     resolver: &dyn ComponentResolver,
     component: &mut LockedComponent,
 ) -> Result<()> {
+    if is_builtin_component(component.component_id.as_str()) {
+        component.describe_hash = "0".repeat(64);
+        component.operations.clear();
+        component.role = Some("builtin".to_string());
+        if component.component_version.is_none() {
+            component.component_version = Some("0.0.0".to_string());
+        }
+        return Ok(());
+    }
+
     let reference = component
         .r#ref
         .as_ref()
@@ -209,6 +219,13 @@ async fn populate_component_contract(
     component.role = Some(describe.info.role);
     component.component_version = Some(describe.info.version);
     Ok(())
+}
+
+fn is_builtin_component(component_id: &str) -> bool {
+    matches!(
+        component_id,
+        "session.wait" | "flow.call" | "provider.invoke"
+    ) || component_id.starts_with("emit.")
 }
 
 struct PackResolver {
