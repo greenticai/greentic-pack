@@ -110,9 +110,11 @@ fn end_to_end_component_pack_workflow() {
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("type `host-error` not defined in interface")
-            || stderr.contains("type 'host-error' not defined in interface")
-        {
+        let host_error_wit_mismatch = stdout.contains("type `host-error` not defined in interface")
+            || stdout.contains("type 'host-error' not defined in interface")
+            || stderr.contains("type `host-error` not defined in interface")
+            || stderr.contains("type 'host-error' not defined in interface");
+        if host_error_wit_mismatch {
             eprintln!(
                 "skipping end_to_end_component_pack_workflow: external greentic-interfaces guest WIT mismatch\nstdout={}\nstderr={}",
                 stdout, stderr
