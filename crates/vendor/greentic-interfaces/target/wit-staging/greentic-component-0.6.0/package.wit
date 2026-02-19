@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:component@0.6.0;
+
+/// Minimal control helpers reused by every component world.
+interface control {
+  /// Returns true when the host requests cancellation.
+  should-cancel: func() -> bool;
+
+  /// Yields execution back to the host.
+  yield-now: func();
+}
+
+/// Component interface for greentic component version 0.6.0.
+interface node {
+  type json = string;
+  /// CBOR payload alias used by the 0.6.0 invoke ABI.
+  type cbor = list<u8>;
+
+  /// Context carried with every invoke call in 0.6.0.
+  record invoke-ctx {
+    session-id: string,
+    i18n-id: string,
+    /// Optional tenant information for deterministic keying.
+    tenant-id: option<string>,
+  }
+
+  /// A structured error code propagated back to the orchestrator.
+  record node-error {
+    code: string,
+    message: string,
+    retryable: bool,
+    backoff-ms: option<u64>,
+    details: option<json>,
+  }
+
+  /// Result of invoking an operation.
+  variant invoke-result {
+    ok(cbor),
+    err(node-error),
+  }
+
+  /// Streaming events emitted from a CBOR invoke.
+  variant stream-event {
+    data(cbor),
+    progress(u8),
+    done,
+    error(string),
+  }
+
+  /// Lifecycle status marker (mirrors the 0.4/0.5 worlds).
+  enum lifecycle-status {
+    ok,
+  }
+
+  /// Returns a JSON manifest describing the component's capabilities.
+  get-manifest: func() -> json;
+
+  /// Optional lifecycle hook when the component starts.
+  on-start: func(ctx: invoke-ctx) -> result<lifecycle-status, string>;
+
+  /// Optional lifecycle hook when the component stops.
+  on-stop: func(ctx: invoke-ctx, reason: string) -> result<lifecycle-status, string>;
+
+  /// Invoke a CBOR payload.
+  invoke: func(ctx: invoke-ctx, op: string, input: cbor) -> invoke-result;
+
+  /// Invoke that emits streaming events using CBOR payloads.
+  invoke-stream: func(ctx: invoke-ctx, op: string, input: cbor) -> list<stream-event>;
+}
+
+world component {
+  import control;
+  export node;
+}

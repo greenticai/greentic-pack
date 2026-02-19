@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:pack@0.6.0;
+
+/// Canonical CBOR payload type used across the 0.6.0 pack surface.
+
+
+/// Pack descriptor and metadata exposure.
+interface pack-descriptor {
+  /// Stable pack identity + versioning (CBOR-encoded).
+  get-pack-info: func() -> list<u8>;
+
+  /// Full pack description (role, capabilities, metadata) as CBOR.
+  describe: func() -> list<u8>;
+}
+
+/// Pack unit listing and unit description exposure.
+interface pack-units {
+  /// Returns CBOR-encoded list of units in the pack.
+  list-units: func() -> list<u8>;
+
+  /// Returns CBOR-encoded description for the given unit id.
+  describe-unit: func(unit-id: string) -> list<u8>;
+}
+
+/// Pack validation surface.
+interface pack-validation {
+  /// Validates the overall pack (CBOR-encoded result).
+  validate-pack: func() -> list<u8>;
+
+  /// Validates a named capability (CBOR-encoded result).
+  validate-capability: func(capability: string) -> list<u8>;
+}
+
+/// QA surface for pack configuration.
+interface pack-qa {
+  /// QA interaction modes for pack configuration.
+  enum qa-mode {
+    default,
+    setup,
+    update,
+    remove,
+  }
+
+  /// Returns CBOR-encoded QA spec for the given mode.
+  qa-spec: func(mode: qa-mode) -> list<u8>;
+
+  /// Applies CBOR-encoded answers to produce/update state.
+  apply-answers: func(mode: qa-mode, current-state: list<u8>, answers: list<u8>) -> list<u8>;
+}
+
+/// i18n is first-class for all human-facing fields.
+interface pack-i18n {
+  /// Returns all i18n keys used by this pack.
+  i18n-keys: func() -> list<string>;
+}
+
+/// Pack world for greentic pack version 0.6.0.
+world pack-v0-v6-v0 {
+  import pack-descriptor;
+  import pack-units;
+  import pack-validation;
+  import pack-qa;
+  import pack-i18n;
+}

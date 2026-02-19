@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:http@1.1.0;
+
+interface http-client {
+  use greentic:interfaces-types/types@0.1.0.{tenant-ctx, host-error};
+
+  /// HTTP request issued by a component.
+  record request {
+    method: string,
+    url: string,
+    headers: list<tuple<string, string>>,
+    body: option<list<u8>>,
+  }
+
+  /// HTTP response returned by the host.
+  record response {
+    status: u16,
+    headers: list<tuple<string, string>>,
+    body: option<list<u8>>,
+  }
+
+  /// Optional request tunables applied by the host.
+  record request-options {
+    /// Millisecond deadline applied by the host, if supported.
+    timeout-ms: option<u32>,
+    /// Whether TLS validation errors may be ignored.
+    allow-insecure: option<bool>,
+    /// Whether redirects should be followed automatically.
+    follow-redirects: option<bool>,
+  }
+
+  /// Issues an HTTP request using the host's networking stack.
+  send: func(
+    req: request,
+    opts: option<request-options>,
+    ctx: option<tenant-ctx>
+  ) -> result<response, host-error>;
+}
+
+world client {
+  import http-client;
+}

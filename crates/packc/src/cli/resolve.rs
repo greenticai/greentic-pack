@@ -5,10 +5,13 @@ use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
+use crate::config::load_pack_config;
+use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
+use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_interfaces_host::component_v0_6::{ComponentV0_6, instantiate_component_v0_6};
+use greentic_flow::wizard_ops;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, write_pack_lock};
 use greentic_pack::resolver::{ComponentResolver, ResolveReq, ResolvedComponent};
 use greentic_types::cbor::canonical;
@@ -18,12 +21,6 @@ use hex;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
-use wasmtime::component::{Component as WasmtimeComponent, Linker};
-
-use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
-use crate::config::load_pack_config;
-use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
-use crate::runtime::RuntimeContext;
 
 #[derive(Debug, Args)]
 pub struct ResolveArgs {
@@ -284,15 +281,10 @@ where
 }
 
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let describe_bytes = instance.describe(&mut store).context("call describe")?;
-    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+    let _ = engine;
+    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
+        .context("fetch wizard spec")?;
+    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
 }
 
 fn load_describe_from_cache_path(path: Option<&Path>) -> Result<Option<ComponentDescribe>> {

@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:secrets-store@1.0.0;
+
+/// Read-only secrets interface exposed by Greentic hosts.
+interface secrets-store {
+  /// Canonical error payload for secret lookups.
+  enum secrets-error {
+    /// Secret was not found or not provisioned for this component.
+    not-found,
+    /// Access to the secret was denied by host policy.
+    denied,
+    /// The provided key was invalid or malformed.
+    invalid-key,
+    /// An internal host error occurred.
+    internal,
+  }
+
+  /// Reads a secret value; returns `none` when the key is missing.
+  get: func(key: string) -> result<option<list<u8>>, secrets-error>;
+}
+
+world store {
+  import secrets-store;
+}

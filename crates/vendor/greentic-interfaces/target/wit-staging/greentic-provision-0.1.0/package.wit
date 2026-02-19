@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:provision@0.1.0;
+
+/// Provisioning entry points implemented by provider extension packs.
+interface provisioner {
+  /// Diagnostics emitted during plan/apply steps.
+  record diagnostic {
+    /// "info" | "warn" | "error".
+    severity: string,
+    code: string,
+    message: string,
+    path: option<string>,
+    hint: option<string>,
+  }
+
+  /// Tenant context supplied by the host.
+  record tenant-context {
+    tenant-id: string,
+    tenant-name: option<string>,
+    org-id: option<string>,
+    org-name: option<string>,
+  }
+
+  /// Provider install context supplied by the host.
+  record provider-context {
+    provider-id: string,
+    install-id: string,
+    public-base-url: option<string>,
+  }
+
+  /// High-level provisioning mode.
+  enum provision-mode {
+    install,
+    update,
+    remove,
+  }
+
+  /// Answer provided by an operator or UI flow.
+  record answer {
+    key: string,
+    value: string,
+  }
+
+  /// Webhook operation verbs.
+  enum webhook-action {
+    create,
+    update,
+    delete,
+  }
+
+  /// Webhook operation requested by the provisioner.
+  record webhook-op {
+    action: webhook-action,
+    name: string,
+    url: string,
+    events: list<string>,
+  }
+
+  /// Subscription operation verbs.
+  enum subscription-action {
+    create,
+    update,
+    delete,
+  }
+
+  /// Subscription operation requested by the provisioner.
+  record subscription-op {
+    action: subscription-action,
+    topic: string,
+    endpoint: string,
+  }
+
+  /// Existing host state relevant to provisioning.
+  record existing-state {
+    config-json: option<string>,
+    secrets-json: option<string>,
+    webhooks: list<webhook-op>,
+    subscriptions: list<subscription-op>,
+  }
+
+  /// Inputs provided to provisioning components.
+  record provision-inputs {
+    tenant: tenant-context,
+    provider: provider-context,
+    mode: provision-mode,
+    answers: list<answer>,
+    existing: option<existing-state>,
+  }
+
+  /// Provisioning plan output (host applies patches/ops).
+  record provision-plan {
+    /// JSON patch/merge patch payload for configuration changes.
+    config-patch: option<string>,
+    /// JSON patch/merge patch payload for secret changes.
+    secrets-patch: option<string>,
+    webhooks: list<webhook-op>,
+    subscriptions: list<subscription-op>,
+    diagnostics: list<diagnostic>,
+  }
+
+  /// Build a provisioning plan for the current inputs.
+  plan: func(inputs: provision-inputs) -> provision-plan;
+  /// Apply a plan and emit diagnostics for host display.
+  apply: func(inputs: provision-inputs, plan: provision-plan) -> list<diagnostic>;
+}
+
+world provision-runner {
+  export provisioner;
+}

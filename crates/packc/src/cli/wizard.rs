@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_interfaces_host::component_v0_6::{ComponentV0_6, instantiate_component_v0_6};
+use greentic_flow::wizard_ops;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, read_pack_lock, write_pack_lock};
 use greentic_pack::resolver::{ComponentResolver, FixtureResolver};
 use greentic_types::cbor::canonical;
@@ -19,10 +19,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
-use wasmtime::component::{Component as WasmtimeComponent, Linker};
 use wit_component::DecodedWasm;
 
-use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
 use crate::config::{ComponentConfig, ComponentOperationConfig, FlowKindLabel, PackConfig};
 use crate::runtime::{NetworkPolicy, RuntimeContext};
 
@@ -510,30 +508,18 @@ fn describe_component(
     use_cache: bool,
     source_path: Option<&Path>,
 ) -> Result<ComponentDescribe> {
-    let component = match WasmtimeComponent::from_binary(engine, bytes) {
-        Ok(component) => component,
+    let _ = engine;
+    let describe_bytes = match wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
+    {
+        Ok(spec) => spec.describe_cbor,
         Err(err) => {
             if use_cache && let Some(describe) = load_describe_from_cache_path(source_path)? {
                 return Ok(describe);
             }
-            return Err(err).context("decode component bytes");
+            return Err(err).context("fetch wizard spec");
         }
     };
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let describe_bytes = match instance.describe(&mut store) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            if use_cache && let Some(describe) = load_describe_from_cache_path(source_path)? {
-                return Ok(describe);
-            }
-            return Err(err).context("call describe");
-        }
-    };
-    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+    canonical::from_cbor(describe_bytes.as_slice()).context("decode ComponentDescribe")
 }
 
 fn load_describe_from_cache_path(path: Option<&Path>) -> Result<Option<ComponentDescribe>> {

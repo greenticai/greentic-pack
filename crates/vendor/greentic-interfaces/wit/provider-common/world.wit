@@ -1,0 +1,148 @@
+package provider:common@0.0.2;
+
+interface capabilities {
+  record provider-metadata {
+    provider-id: string,
+    display-name: string,
+    version: string,
+    rate-limit-hint: option<string>,
+  }
+
+  record provider-capabilities {
+    supports-threads: bool,
+    supports-buttons: bool,
+    supports-webhook-validation: bool,
+    supports-formatting-options: bool,
+  }
+
+  record provider-limits {
+    max-text-len: u32,
+    callback-data-max-bytes: u32,
+    max-buttons-per-row: u32,
+    max-button-rows: u32,
+  }
+
+  record capabilities-response {
+    metadata: provider-metadata,
+    capabilities: provider-capabilities,
+    limits: provider-limits,
+  }
+}
+
+interface render {
+  use greentic:interfaces-types/types@0.1.0.{tenant-ctx};
+
+  enum tier {
+    tier-a,
+    tier-b,
+    tier-c,
+    tier-d,
+  }
+
+  type render-tier = tier;
+
+  record adaptive-card-downgrade-hint {
+    target-version: string,
+    strict: bool,
+  }
+
+  variant renderer-mode {
+    passthrough,
+    text-only,
+    adaptive-card-downgrade(adaptive-card-downgrade-hint),
+  }
+
+  record capability-profile {
+    max-adaptive-card-version: option<string>,
+    supports-adaptive-cards: option<bool>,
+    supports-actions: option<bool>,
+    supports-media: option<bool>,
+    supports-input-controls: option<bool>,
+    supports-markdown: option<bool>,
+  }
+
+  record render-diagnostics {
+    tier: option<tier>,
+    warnings: list<string>,
+    errors: list<string>,
+  }
+
+  record render-warning {
+    code: string,
+    message: option<string>,
+    path: option<string>,
+  }
+
+  record render-plan {
+    tier: option<render-tier>,
+    renderer-mode: option<renderer-mode>,
+    capability-profile: option<capability-profile>,
+    diagnostics: option<render-diagnostics>,
+    summary-text: option<string>,
+    actions: list<string>,
+    attachments: list<string>,
+    warnings: list<render-warning>,
+    debug-json: option<string>,
+  }
+
+  record provider-payload {
+    content-type: string,
+    body: list<u8>,
+    metadata-json: option<string>,
+  }
+
+  record encode-result {
+    payload: provider-payload,
+    warnings: list<render-warning>,
+  }
+
+  record actor {
+    id: string,
+    kind: option<string>,
+  }
+
+  record destination {
+    id: string,
+    kind: option<string>,
+  }
+
+  record attachment {
+    mime-type: string,
+    url: string,
+    name: option<string>,
+    size-bytes: option<u64>,
+  }
+
+  record reply-scope {
+    conversation: string,
+    thread: option<string>,
+    reply-to: option<string>,
+    correlation: option<string>,
+  }
+
+  type message-metadata = list<tuple<string, string>>;
+
+  record channel-message-envelope {
+    id: string,
+    tenant: tenant-ctx,
+    channel: string,
+    session-id: string,
+    reply-scope: option<reply-scope>,
+    actor: option<actor>,
+    to: list<destination>,
+    correlation-id: option<string>,
+    text: option<string>,
+    attachments: list<attachment>,
+    metadata: message-metadata,
+  }
+
+  record render-hints {
+    renderer-mode: option<renderer-mode>,
+    capability-profile: option<capability-profile>,
+  }
+}
+
+world common {
+  export capabilities;
+  export render;
+}

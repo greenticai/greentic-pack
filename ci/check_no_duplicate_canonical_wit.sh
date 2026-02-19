@@ -6,6 +6,7 @@ PATTERN='^package\s+greentic:component@'
 MATCHES="$(rg -n --hidden --glob '!.git/*' --glob '*.wit' \
   --glob '!**/target/**' \
   --glob '!**/out/**' \
+  --glob '!crates/vendor/**' \
   --glob '!**/wit-staging/**' \
   "$PATTERN" . || true)"
 

@@ -3,6 +3,9 @@
 This guide expands on the README with end-to-end instructions for building
 Greentic packs and integrating them with the MCP runtime.
 
+For compatibility-only behavior and deprecated aliases, see
+`docs/vision/legacy.md`.
+
 ## Installing the CLI
 
 Fetch the prebuilt release binaries via `cargo-binstall`:
@@ -12,29 +15,30 @@ cargo install cargo-binstall   # run once
 cargo binstall greentic-pack packc
 ```
 
-The install brings in the canonical `greentic-pack` CLI plus the `packc`
-compatibility shim; once installed they're available on your `PATH`.
+The install provides the canonical `greentic-pack` CLI on your `PATH`.
 
 ## Workflow overview
 
-1. **Author a pack manifest** – create `pack.yaml` with metadata, `flow_files`,
-   optional `template_dirs`, and (legacy) `imports_required` entries.
+1. **Author a pack manifest** - create `pack.yaml` with metadata, `flow_files`,
+   and optional `template_dirs`.
 2. **Write flows** – author `.ygtc` files that orchestrate conversation
    behaviour. Flows should reference MCP tools using `mcp.exec` nodes so the
    host can negotiate tool execution at runtime.
 3. **Add templates** – drop supplementary assets (markdown, prompts, UI
    fragments) under directories listed in `template_dirs`.
-4. **Run `packc`** – build the pack artifacts locally. The CLI validates the
+4. **Run `greentic-pack build`** - build the pack artifacts locally. The CLI validates the
    manifest, fingerprints flows/templates, writes a CBOR manifest, and emits a
    Wasm component backed by the generated `data.rs` payload.
-5. **Ship the artifacts** – publish the resulting Wasm module (`pack.wasm`) and
-   manifest/SBOM outputs to the desired distribution channel.
+5. **Ship the artifacts** - publish the resulting `.gtpack` and related outputs
+   to the desired distribution channel.
 
 For declaring providers inside `pack.yaml`, see
-`docs/events-provider-packs.md`. The provider extension is optional and
+`docs/extension-provider-packs-howto.md`. The provider extension is optional and
 validated by `greentic-pack lint`; scaffold a starter pack with
 `greentic-pack new` and inspect it with
 `greentic-pack providers list --pack <path>`.
+For pack localization and QA prompt translation patterns, see
+`docs/internationalise-pack-howto.md`.
 
 For repo-oriented packs (source/scanner/signing/attestation/policy/oci),
 see `docs/repo-pack-types.md` for the schema, capabilities, and bindings
@@ -42,26 +46,21 @@ requirements.
 
 ## CLI reference
 
-`packc` exposes a `build` subcommand with structured flags:
+`greentic-pack build` exposes a structured build interface:
 
 ```text
-Usage: packc build --in <DIR> [--out <FILE>] [--manifest <FILE>]
-                   [--sbom <FILE>] [--gtpack-out <FILE>] [--component-data <FILE>]
-                   [--dry-run] [--log <LEVEL>]
+Usage: greentic-pack build --in <DIR> [--manifest <FILE>] [--gtpack-out <FILE>]
+                           [--bundle <cache|none>] [--dry-run] [--log <LEVEL>]
 ```
 
 - `--in` – path to the pack directory containing `pack.yaml`.
-- `--out` – location for the compiled Wasm component (default `dist/pack.wasm`).
 - `--manifest` – CBOR manifest output (default `dist/manifest.cbor`).
-- `--sbom` – CycloneDX JSON report capturing flow/template hashes (default
-  `dist/sbom.cdx.json`).
 - `--gtpack-out` – optional path to the `.gtpack` archive that packages the
   manifest, SBOM, flows, templates, and compiled component.
-- `--component-data` – override the generated `data.rs` location if you need to
-  export the payload somewhere other than `crates/pack_component/src/data.rs`.
+- `--bundle` - bundle strategy (`cache` to embed runtime artifacts, `none` for refs-only).
 - `--dry-run` – validate inputs without writing artifacts or compiling Wasm.
 - `--secrets-req` – optional JSON/YAML file with additional secret
-  requirements (migration bridge).
+  requirements.
 - `--default-secret-scope` – dev-only helper to fill missing secret scopes
   (format: `ENV/TENANT[/TEAM]`).
 - `--log` – customise the tracing filter (defaults to `info`).
@@ -83,14 +82,14 @@ and conflicts emit a warning rather than overwriting. Pass `--dev` when you
 need to bundle the original source artifacts (`pack.yaml`, `.ygtc`, JSON
 manifests, etc.) for debugging.
 
-`packc` writes structured progress logs to stderr. When invoking inside CI, pass
+`greentic-pack` writes structured progress logs to stderr. When invoking inside CI, pass
 `--dry-run` to skip Wasm compilation if the target toolchain is unavailable.
-Use `packc config` to print the resolved configuration, provenance, and any
+Use `greentic-pack config` to print the resolved configuration, provenance, and any
 warnings (add `--json` for machine-readable output).
 
 ### Inspecting packs
 
-Use `greentic-pack doctor` (or the compatibility alias `inspect`) to read a
+Use `greentic-pack doctor` to read a
 `.gtpack` archive (`--pack`) or a source directory (`--in`, containing
 `pack.yaml`). Source mode shells out to `packc build --gtpack-out` in a temp
 dir to guarantee parity with archive inspection. Examples:
@@ -186,19 +185,19 @@ packc gui loveable-convert \
 
 ## Scaffolding new packs
 
-`packc new` bootstraps a directory that already matches the expected manifest
+`greentic-pack new` bootstraps a directory that already matches the expected manifest
 and flow layout:
 
 ```bash
-packc new hello-pack --dir ./hello-pack
+greentic-pack new hello-pack --dir ./hello-pack
 cd hello-pack
-packc build --in . --dry-run
+greentic-pack build --in . --dry-run
 ```
 
 The command writes `pack.yaml`, `flows/main.ygtc`, and an empty
 `components/` directory (no stub `.wasm` is generated). Populate
 `components/` with your compiled Wasm components and add additional flows as
-needed, then run `packc update --in .` to refresh `pack.yaml`.
+needed, then run `greentic-pack update --in .` to refresh `pack.yaml`.
 
 ## Example build
 
@@ -206,28 +205,23 @@ needed, then run `packc update --in .` to refresh `pack.yaml`.
 rustup target add wasm32-wasip2   # run once
 cargo run -p greentic-pack --bin greentic-pack -- build \
   --in examples/weather-demo \
-  --out dist/pack.wasm \
   --manifest dist/manifest.cbor \
-  --sbom dist/sbom.cdx.json \
   --gtpack-out dist/demo.gtpack
 ```
 
 Outputs:
 
-- `dist/pack.wasm` – a Wasm component exporting `greentic:pack-export` stub
-  methods backed by the embedded data bundle.
 - `dist/manifest.cbor` – canonical pack manifest suitable for transmission.
-- `dist/sbom.cdx.json` – CycloneDX summary documenting flows/templates.
 - `crates/pack_component/src/data.rs` – regenerated Rust source containing raw
   bytes for the manifest, flow sources, and templates.
 - `.packc/mcp/<id>/component.wasm` – merged MCP adapter+router components for
   each `mcp_components` entry.
 
-When you pass `--gtpack-out`, packc calls `greentic-pack` to write the
+When you pass `--gtpack-out`, the build writes the
 canonical `.gtpack` archive. Use
 `cargo run -p greentic-pack --bin greentic-pack -- --json doctor dist/demo.gtpack`
 to inspect the archive, confirm the SBOM entries have media types, and ensure
-the flows/templates match what was written into `dist/pack.wasm`.
+the flows/templates match what was written into `manifest.cbor`.
 
 ## Planning deployments
 
@@ -371,8 +365,7 @@ Each file contains canonical CBOR for `PackQaSpec`.
 
 For component QA on the 0.6 path, `greentic-pack qa` runs:
 `describe -> qa-spec -> ask -> apply-answers -> strict validation against describe.config_schema`.
-`upgrade` remains a deprecated alias for `update` in CLI input; output normalizes to `update`.
-Alias removal is planned for a future `0.6.x/0.7` release (no fixed date/version yet).
+Compatibility aliases are documented in `docs/vision/legacy.md`.
 
 ## CI tips
 

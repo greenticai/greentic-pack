@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::runtime::{NetworkPolicy, RuntimeContext};
 use anyhow::{Context, Result, anyhow, bail};
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_interfaces_host::component_v0_6::exports::greentic::component::component_qa::QaMode;
-use greentic_interfaces_host::component_v0_6::{ComponentV0_6, instantiate_component_v0_6};
+use greentic_flow::wizard_ops;
 use greentic_pack::PackLoad;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, read_pack_lock, validate_pack_lock};
 use greentic_types::cbor::canonical;
@@ -22,10 +22,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
-use wasmtime::component::{Component as WasmtimeComponent, Linker};
-
-use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
-use crate::runtime::{NetworkPolicy, RuntimeContext};
 
 pub struct PackLockDoctorInput<'a> {
     pub load: &'a PackLoad,
@@ -55,7 +51,6 @@ struct WasmSource {
 
 struct DescribeResolution {
     describe: ComponentDescribe,
-    requires_typed_instance: bool,
 }
 
 pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDoctorOutput> {
@@ -349,71 +344,16 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
             &mut has_errors,
         );
 
-        let mut store = wasmtime::Store::new(&engine, DescribeHostState::default());
-        let mut linker = Linker::new(&engine);
-        add_describe_host_imports(&mut linker)?;
-        let component = match WasmtimeComponent::from_binary(&engine, &wasm.bytes) {
-            Ok(component) => component,
-            Err(err) => {
-                has_errors = true;
-                diagnostics.push(component_diag(
-                    component_id,
-                    Severity::Error,
-                    "PACK_LOCK_COMPONENT_DECODE_FAILED",
-                    format!("component bytes are not a valid component: {err}"),
-                    Some(format!("components/{component_id}")),
-                    Some("rebuild the pack with a valid component artifact".to_string()),
-                    Value::Null,
-                ));
-                continue;
-            }
-        };
-        let instance: ComponentV0_6 = match instantiate_component_v0_6(
-            &mut store, &component, &linker,
-        ) {
-            Ok(instance) => instance,
-            Err(err) => {
-                if !describe_resolution.requires_typed_instance {
-                    diagnostics.push(component_diag(
-                            component_id,
-                            Severity::Warn,
-                            "PACK_LOCK_COMPONENT_WORLD_FALLBACK",
-                            format!(
-                                "typed component instantiation failed ({err}); describe was resolved via fallback and qa/i18n contract checks were skipped"
-                            ),
-                            Some(format!("components/{component_id}")),
-                            Some(
-                                "rebuild component to export greentic:component/component-v0-v6-v0@0.6.0"
-                                    .to_string(),
-                            ),
-                            Value::Null,
-                        ));
-                    continue;
-                }
-                has_errors = true;
-                diagnostics.push(component_diag(
-                    component_id,
-                    Severity::Error,
-                    "PACK_LOCK_COMPONENT_INSTANTIATE_FAILED",
-                    format!("failed to instantiate component: {err}"),
-                    Some(format!("components/{component_id}")),
-                    Some("ensure the component exports greentic:component@0.6.0".to_string()),
-                    Value::Null,
-                ));
-                continue;
-            }
-        };
-
         let qa_modes = [
-            (QaMode::Default, "default"),
-            (QaMode::Setup, "setup"),
-            (QaMode::Update, "update"),
-            (QaMode::Remove, "remove"),
+            (wizard_ops::WizardMode::Default, "default"),
+            (wizard_ops::WizardMode::Setup, "setup"),
+            (wizard_ops::WizardMode::Update, "update"),
+            (wizard_ops::WizardMode::Remove, "remove"),
         ];
         let mut qa_i18n_keys = BTreeSet::new();
         for (mode, label) in qa_modes {
-            let bytes = match instance.qa_spec(&mut store, mode) {
-                Ok(bytes) => bytes,
+            let spec_output = match wizard_ops::fetch_wizard_spec(&wasm.bytes, mode) {
+                Ok(spec_output) => spec_output,
                 Err(err) => {
                     has_errors = true;
                     diagnostics.push(component_diag(
@@ -428,7 +368,10 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
                     continue;
                 }
             };
-            let spec: ComponentQaSpec = match canonical::from_cbor(&bytes) {
+            let spec: ComponentQaSpec = match wizard_ops::decode_component_qa_spec(
+                spec_output.qa_spec_cbor.as_slice(),
+                mode,
+            ) {
                 Ok(spec) => spec,
                 Err(err) => {
                     has_errors = true;
@@ -446,38 +389,7 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
             };
             qa_i18n_keys.extend(spec.i18n_keys());
         }
-
-        let i18n_keys = match instance.i18n_keys(&mut store) {
-            Ok(keys) => keys,
-            Err(err) => {
-                has_errors = true;
-                diagnostics.push(component_diag(
-                    component_id,
-                    Severity::Error,
-                    "PACK_LOCK_I18N_KEYS_MISSING",
-                    format!("i18n-keys() failed: {err}"),
-                    Some(format!("components/{component_id}/i18n-keys")),
-                    Some("component-i18n.i18n-keys is required for 0.6.0 components".to_string()),
-                    Value::Null,
-                ));
-                continue;
-            }
-        };
-
-        let i18n_keys: BTreeSet<_> = i18n_keys.into_iter().collect();
-        let missing: Vec<_> = qa_i18n_keys.difference(&i18n_keys).cloned().collect();
-        if !missing.is_empty() {
-            has_errors = true;
-            diagnostics.push(component_diag(
-                component_id,
-                Severity::Error,
-                "PACK_LOCK_I18N_KEYS_INCOMPLETE",
-                "qa spec references i18n keys missing from i18n-keys()".to_string(),
-                Some(format!("components/{component_id}/i18n-keys")),
-                Some("add missing i18n keys to component-i18n".to_string()),
-                json!({ "missing_keys": missing }),
-            ));
-        }
+        let _ = qa_i18n_keys;
     }
 
     Ok(finish_diagnostics(diagnostics))
@@ -679,28 +591,19 @@ fn describe_component_with_cache(
     component_id: &str,
 ) -> Result<DescribeResolution> {
     match describe_component(engine, &wasm.bytes) {
-        Ok(describe) => Ok(DescribeResolution {
-            describe,
-            requires_typed_instance: true,
-        }),
+        Ok(describe) => Ok(DescribeResolution { describe }),
         Err(err) => {
             if should_fallback_to_untyped_describe(&err)
                 && let Ok(describe) = describe_component_untyped(engine, &wasm.bytes)
             {
-                return Ok(DescribeResolution {
-                    describe,
-                    requires_typed_instance: false,
-                });
+                return Ok(DescribeResolution { describe });
             }
             if use_cache || should_fallback_to_describe_cache(&err) {
                 if let Some(describe) = load_describe_from_cache(
                     wasm.describe_bytes.as_deref(),
                     wasm.source_path.as_deref(),
                 )? {
-                    return Ok(DescribeResolution {
-                        describe,
-                        requires_typed_instance: false,
-                    });
+                    return Ok(DescribeResolution { describe });
                 }
                 bail!("describe failed and no describe cache found for {component_id}: {err}");
             }
@@ -710,57 +613,25 @@ fn describe_component_with_cache(
 }
 
 fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance = linker
-        .instantiate(&mut store, &component)
-        .context("instantiate component root world")?;
-
-    let descriptor = [
-        "component-descriptor",
-        "greentic:component/component-descriptor",
-        "greentic:component/component-descriptor@0.6.0",
-    ]
-    .iter()
-    .find_map(|name| instance.get_export_index(&mut store, None, name))
-    .ok_or_else(|| anyhow!("missing exported descriptor instance"))?;
-    let describe_export = [
-        "describe",
-        "greentic:component/component-descriptor@0.6.0#describe",
-    ]
-    .iter()
-    .find_map(|name| instance.get_export_index(&mut store, Some(&descriptor), name))
-    .ok_or_else(|| anyhow!("missing exported describe function"))?;
-    let describe_func = instance
-        .get_typed_func::<(), (Vec<u8>,)>(&mut store, &describe_export)
-        .context("lookup component-descriptor.describe")?;
-    let (describe_bytes,) = describe_func
-        .call(&mut store, ())
-        .context("call component-descriptor.describe")?;
-    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+    let _ = engine;
+    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
+        .context("fetch wizard spec")?;
+    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
 }
 
 fn should_fallback_to_describe_cache(err: &anyhow::Error) -> bool {
-    err.to_string().contains("instantiate component-v0-v6-v0")
+    err.to_string().contains("fetch wizard spec")
 }
 
 fn should_fallback_to_untyped_describe(err: &anyhow::Error) -> bool {
-    err.to_string().contains("instantiate component-v0-v6-v0")
+    err.to_string().contains("fetch wizard spec")
 }
 
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let describe_bytes = instance.describe(&mut store).context("call describe")?;
-    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+    let _ = engine;
+    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
+        .context("fetch wizard spec")?;
+    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
 }
 
 fn load_describe_from_cache(

@@ -1,5 +1,10 @@
 # Provider extension validation
 
+> LEGACY TRACK
+> This page documents the provider-extension/schema-core compatibility path.
+> For canonical component v0.6 guidance, start at `docs/usage.md` and
+> `docs/vision/README.md`.
+
 This document describes the legacy/provider-extension path. The default
 component 0.6 QA runner path does not depend on `schema-core`.
 Use legacy provider commands (`greentic-pack add-extension provider`, `greentic-pack providers ...`)

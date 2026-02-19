@@ -8,6 +8,7 @@ set -euo pipefail
 : "${LOCAL_CHECK_ONLINE:=1}"
 : "${LOCAL_CHECK_STRICT:=0}"
 : "${LOCAL_CHECK_VERBOSE:=0}"
+MIN_RUST_MINOR=91
 
 if [[ "$LOCAL_CHECK_VERBOSE" == "1" ]]; then
   set -x
@@ -32,6 +33,30 @@ print_version() {
 step() {
   echo ""
   echo "▶ $*"
+}
+
+check_rust_version() {
+  if ! need rustc; then
+    echo "[miss] rustc (required: >= 1.${MIN_RUST_MINOR})"
+    if [[ "$LOCAL_CHECK_STRICT" == "1" ]]; then
+      echo "[fail] Missing rustc in strict mode"
+      exit 1
+    fi
+    return 0
+  fi
+
+  local rustc_ver
+  rustc_ver=$(rustc --version | awk '{print $2}')
+  local rustc_minor_num
+  rustc_minor_num=$(awk -F. '{print $2}' <<<"$rustc_ver")
+
+  if [[ "$rustc_minor_num" -lt "$MIN_RUST_MINOR" ]]; then
+    echo "[warn] rustc ${rustc_ver} detected; expected >= 1.${MIN_RUST_MINOR}"
+    if [[ "$LOCAL_CHECK_STRICT" == "1" ]]; then
+      echo "[fail] rustc version mismatch in strict mode"
+      exit 1
+    fi
+  fi
 }
 
 require_tool() {
@@ -214,6 +239,7 @@ main() {
 
   print_version rustc
   print_version cargo
+  check_rust_version
 
   if ! need greentic-component; then
     step "Install greentic-component"
@@ -222,6 +248,9 @@ main() {
 
   step "Formatting"
   run_or_skip "cargo fmt" fmt_check
+
+  step "Interfaces import guard"
+  run_or_skip "bindings import guard" bash ci/check_no_interfaces_bindings_imports.sh
 
   step "Clippy"
   run_or_skip "cargo clippy" clippy_check

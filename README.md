@@ -55,6 +55,9 @@ For the full taxonomy and rules, see:
 - `docs/repo-pack-types.md`
 - `docs/provider_extension.md`
 
+Full docs index:
+- `docs/README.md`
+
 ## How packs work (short version)
 
 1. Author a `pack.yaml` and flows (`.ygtc`).
@@ -67,7 +70,10 @@ Deep dives:
 - `docs/pack-format.md`
 - `docs/usage.md`
 - `docs/pack_extensions_components.md`
-- `docs/events-provider-packs.md`
+- `docs/extension-provider-packs-howto.md`
+- `docs/internationalise-pack-howto.md`
+- `docs/vision/README.md`
+- `docs/vision/legacy.md`
 
 ## Example packs
 
@@ -79,6 +85,8 @@ Deep dives:
 ## CLI reference
 
 See `docs/cli.md` for a complete reference of commands, flags, and workflows.
+For compatibility-only aliases and migration switches, see
+`docs/vision/legacy.md`.
 
 ## Local checks & publishing
 

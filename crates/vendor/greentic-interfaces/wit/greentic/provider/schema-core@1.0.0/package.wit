@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:provider-schema-core@1.0.0;
+
+/// Minimal provider schema surface for provider-core contracts.
+interface schema-core-api {
+  /// Describes the provider manifest as JSON bytes.
+  /// The JSON should at minimum include: `provider_type`, `capabilities`, and `ops`.
+  describe: func() -> list<u8>;
+
+  /// Validates configuration JSON; returns a JSON payload (opaque to the ABI).
+  validate-config: func(config-json: list<u8>) -> validation-result;
+
+  /// Returns provider health as a JSON payload.
+  healthcheck: func() -> health-status;
+
+  /// Invokes a provider operation with JSON input, returning JSON output.
+  invoke: func(op: string, input-json: list<u8>) -> invoke-result;
+  /// Opaque validation result JSON payload.
+  type validation-result = list<u8>;
+
+  /// Opaque health status JSON payload.
+  type health-status = list<u8>;
+
+  /// Opaque invocation result JSON payload.
+  type invoke-result = list<u8>;
+}
+
+world schema-core {
+  export schema-core-api;
+}

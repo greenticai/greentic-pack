@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: MIT
+
+// ------------------------------------------------------------
+// DEPRECATED
+//
+// This package is deprecated and kept for backward compatibility.
+//
+// Reason:
+//   Experimental surface superseded by the CBOR-based, self-describing model.
+//
+// Replacement:
+//   greentic:component@1.0.0 (future)
+//
+// Status:
+//   No new development. No new versions will be published.
+// ------------------------------------------------------------
+// SPDX-License-Identifier: MIT
+
+package greentic:component-v1@0.1.0;
+
+interface component-api {
+  use greentic:common-types/types@0.1.0.{component-outcome};
+  use greentic:interfaces-types/types@0.1.0.{tenant-ctx};
+
+  /// Invocation envelope for a component operation.
+  record component-invoke-request {
+    tenant: tenant-ctx,
+    component-id: string,
+    operation: option<string>,
+    input-json: string,
+  }
+
+  /// Invoke a component by id/operation with JSON input.
+  invoke: func(req: component-invoke-request) -> component-outcome;
+}
+
+world component-host {
+  export component-api;
+}

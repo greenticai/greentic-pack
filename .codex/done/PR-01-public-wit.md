@@ -1,19 +1,39 @@
-# PR-01 Public WIT Completion
+0) Global rule for all repos (tell Codex this every time)
 
-Date: 2026-02-18
+Use this paragraph at the top of every prompt:
 
-## What was implemented
-- Removed committed canonical `greentic:component@0.6.0` WIT duplicates from this repo.
-- Ensured v0.6 test fixture uses the canonical guest wrapper macro:
-  - `crates/packc/tests/fixtures/components/noop-component-v06-src/src/lib.rs`
-  - Uses `greentic_interfaces_guest::export_component_v060!`.
-- Added guard script to prevent future canonical WIT copies:
-  - `ci/check_no_duplicate_canonical_wit.sh`
-- Verified duplicate guard passes:
-  - `bash ci/check_no_duplicate_canonical_wit.sh` => `OK: No canonical greentic:component WIT found.`
-- Ensured CI wiring calls the guard script in workflow steps.
+Global policy: greentic:component@0.6.0 WIT must have a single source of truth in greentic-interfaces. No other repo should define or vendor package greentic:component@0.6.0 or world component-v0-v6-v0 in its own wit/ directory. Repos may keep tiny repo-specific worlds (e.g. messaging-provider-teams) but must depend on the canonical greentic component WIT via deps/ pointing at greentic-interfaces or via a published crate path, never by copying the WIT file contents.
 
-## Validation status
-- `cargo build`: passes.
-- `./ci/local_check.sh`: executed; formatting/clippy/build and many test suites passed during this run.
-- Note: the active local-check session includes long-running integration tests and was still running at time of writing.
+C) greentic-pack repo prompt (remove vendored WIT; consume canonical)
+You are working in the greentic-pack repository.
+
+Goal
+- Ensure greentic-pack does not vendor/copy canonical greentic component WIT.
+- All references to `greentic:component@0.6.0` WIT must come from greentic-interfaces.
+- Remove or stop using `crates/vendor/greentic-flow/wit/*` if it is only there to provide canonical WIT; replace with dependency on greentic-flow crate or greentic-interfaces WIT.
+- Ensure tests/fixtures that need a v0.6 component use greentic-interfaces-guest wrapper macro (or canonical WIT deps), not copied WIT.
+
+Work
+1) Inventory:
+- Find all `.wit` files in this repo declaring `package greentic:component@0.6.0;`.
+- Find vendored WIT directories under `crates/vendor/`.
+- Classify:
+  a) canonical greentic component WIT (must be removed/replaced)
+  b) pack-specific worlds (can remain)
+
+2) Replace:
+- For v0.6 component fixtures in tests (e.g. noop-component-v06-src):
+  - Remove local WIT copies of greentic:component if present.
+  - Depend on canonical WIT from greentic-interfaces (path dep in workspace or crate-provided wit dir).
+  - If a Rust fixture component exists, switch to `greentic_interfaces_guest::export_component_v060!`.
+
+3) Add a guard test:
+- Add a test that fails if any committed `.wit` file in this repo contains `package greentic:component@0.6.0;` (excluding `target/` and excluding explicitly allowed fixture directories if you must keep one).
+- This prevents future copying.
+
+Deliverables
+- No committed canonical greentic component WIT duplicates in greentic-pack
+- Tests updated to use canonical WIT / guest wrapper macro
+- Guard test in place
+
+Now implement it.

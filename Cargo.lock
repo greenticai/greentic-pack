@@ -330,9 +330,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.19.1"
+version = "3.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
+checksum = "5c6f81257d10a0f602a294ae4182251151ff97dbb504ef9afcdda4a64b24d9b4"
 dependencies = [
  "allocator-api2",
 ]
@@ -1568,9 +1568,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.96"
+version = "0.4.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4191d72f8718a7c61abab3510ffc36673030a2ca807a2fb0ffb89f7826d56c5e"
+checksum = "269cc48ca52e673316a523a98e6dcac99ecc0d2e0f8b9e5a9c0eac42dd8ee735"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1585,9 +1585,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-guest"
-version = "0.4.96"
+version = "0.4.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d080899dc108dacaa1f55d763ef279f6bf11e2e4b838736755303df2656f1a1"
+checksum = "03eda74676a7be3f1ed672a381c27de347a7b2d4518d21d946afab24e47b7130"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1598,9 +1598,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.96"
+version = "0.4.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6304645b6934805700cb388b9ba6ec2c3ba66a0f9acb06ce0504f9f322a57a11"
+checksum = "5ce3ce5e80c7a256fd670bd2a2bd28fa97018029abaf356104173ff2e2b44d40"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack"
-version = "0.4.93"
+version = "0.4.94"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack-lib"
-version = "0.4.93"
+version = "0.4.94"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1713,9 +1713,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "0.4.51"
+version = "0.4.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5538a87835f94745a7d65f056991b89c7250952785b1b23602b3d9da0c005a7"
+checksum = "2d79e62588f45c9f77e7b766a8e873f26e3112a783c7d3a3fa80a9d66b0568df"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1743,9 +1743,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types-macros"
-version = "0.4.51"
+version = "0.4.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c94ea3dcee5b30b4936c6a37dff6b680df6b93ae84214fb05b59f854fac641c6"
+checksum = "3d111e9458be079fd2a97c6da5e7cd829fa1259a6e9f1d02ad991c3b7a1a51a4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2778,7 +2778,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pack_component"
-version = "0.4.93"
+version = "0.4.94"
 dependencies = [
  "greentic-interfaces-host",
  "serde",
@@ -2788,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "pack_component_template"
-version = "0.4.93"
+version = "0.4.94"
 
 [[package]]
 name = "parking_lot"

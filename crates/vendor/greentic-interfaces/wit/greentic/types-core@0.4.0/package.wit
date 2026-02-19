@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT
+
+// ------------------------------------------------------------
+// DEPRECATED
+//
+// This package is deprecated and kept for backward compatibility.
+//
+// Reason:
+//   Superseded by canonical interfaces-types with greentic-types schemas.
+//
+// Replacement:
+//   greentic:interfaces-types@0.1.0 + greentic-types
+//
+// Status:
+//   No new development. No new versions will be published.
+// ------------------------------------------------------------
+// SPDX-License-Identifier: MIT
+
+package greentic:types-core@0.4.0;
+
+interface types {
+  /// identifiers
+  type flow-id = string;
+  use greentic:interfaces-types/types@0.1.0.{tenant-id, team-id, user-id, tenant-ctx, iface-error};
+
+  /// clouds & platforms (keep enums stable; add variants only in minor bumps)
+  enum cloud { aws, gcp, azure, hetzner, local, other }
+  enum platform { k8s, nomad, systemd, cfworkers, lambda, baremetal, other }
+
+  /// flow deployment context supplied by hosts
+  record deployment-ctx {
+    cloud: cloud,
+    region: option<string>,
+    platform: platform,
+    runtime: option<string>,
+    i18n-id: option<string>,
+  }
+
+  /// flow registration information
+  record flow-info {
+    id: flow-id,
+    /// human-readable name
+    profile: string,
+    /// semver identifier
+    version: string,
+    /// "messaging" | "webhook" | "timer" | ...
+    %type: string,
+    private: bool,
+  }
+
+  /// execution modifiers supplied when running a flow
+  record run-opts {
+    tenant: option<tenant-ctx>,
+    deployment: option<deployment-ctx>,
+    timeout-ms: option<u32>,
+    /// Wasm "fuel" if host enforces
+    fuel-units: option<u64>,
+  }
+
+  /// JSON schema documents describing flow IO
+  record schema-doc {
+    input-jsonschema: string,
+    output-jsonschema: string,
+  }
+
+  /// result returned by a flow execution
+  record run-result {
+    /// "ok" | "error" | "deferred"
+    status: string,
+    output-json: option<string>,
+    error: option<string>,
+    logs-json: option<string>,
+    metrics-json: option<string>,
+  }
+
+  /// A2A search candidate
+  record a2a-candidate {
+    flow: flow-id,
+    score: f32,
+  }
+
+  /// standardized interface errors
+  // iface-error imported from greentic:interfaces-types/types@0.1.0
+}
+
+world core {
+  export types;
+}

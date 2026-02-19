@@ -5,14 +5,13 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use crate::config::PackConfig;
+use crate::runtime::{NetworkPolicy, RuntimeContext};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, ValueEnum};
 use greentic_distributor_client::{DistClient, DistOptions};
 use greentic_flow::schema_validate::{Severity, validate_value_against_schema};
-use greentic_interfaces_host::component_v0_6::{
-    ComponentV0_6, exports::greentic::component::component_qa::QaMode as HostQaMode,
-    instantiate_component_v0_6,
-};
+use greentic_flow::wizard_ops;
 use greentic_pack::pack_lock::read_pack_lock;
 use greentic_types::cbor::canonical;
 use greentic_types::i18n_text::I18nText;
@@ -30,11 +29,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
-use wasmtime::component::{Component as WasmtimeComponent, Linker};
-
-use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
-use crate::config::PackConfig;
-use crate::runtime::{NetworkPolicy, RuntimeContext};
 
 #[derive(Debug, Args)]
 pub struct QaArgs {
@@ -95,12 +89,12 @@ impl QaModeLabel {
         }
     }
 
-    fn to_host_mode(self) -> HostQaMode {
+    fn to_wizard_mode(self) -> wizard_ops::WizardMode {
         match self {
-            QaModeLabel::Default => HostQaMode::Default,
-            QaModeLabel::Setup => HostQaMode::Setup,
-            QaModeLabel::Update | QaModeLabel::Upgrade => HostQaMode::Update,
-            QaModeLabel::Remove => HostQaMode::Remove,
+            QaModeLabel::Default => wizard_ops::WizardMode::Default,
+            QaModeLabel::Setup => wizard_ops::WizardMode::Setup,
+            QaModeLabel::Update | QaModeLabel::Upgrade => wizard_ops::WizardMode::Update,
+            QaModeLabel::Remove => wizard_ops::WizardMode::Remove,
         }
     }
 
@@ -242,7 +236,7 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
         let resolved =
             resolve_component_bytes(&dist, runtime, &reference, Some(&locked.resolved_digest))?;
 
-        let spec = load_component_qa_spec(&engine, &resolved.bytes, args.mode.to_host_mode())
+        let spec = load_component_qa_spec(&engine, &resolved.bytes, args.mode.to_wizard_mode())
             .with_context(|| format!("load QA spec for {}", component_id))?;
 
         if spec.mode != args.mode.to_spec_mode() {
@@ -279,7 +273,7 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
         let config_cbor = apply_component_answers(
             &engine,
             &resolved.bytes,
-            args.mode.to_host_mode(),
+            args.mode.to_wizard_mode(),
             &current_config,
             &answers_cbor,
         )
@@ -963,49 +957,30 @@ where
 }
 
 fn load_component_qa_spec(
-    engine: &Engine,
+    _engine: &Engine,
     bytes: &[u8],
-    mode: HostQaMode,
+    mode: wizard_ops::WizardMode,
 ) -> Result<ComponentQaSpec> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let qa_bytes = instance.qa_spec(&mut store, mode).context("call qa_spec")?;
-    canonical::from_cbor(&qa_bytes).context("decode ComponentQaSpec")
+    let spec = wizard_ops::fetch_wizard_spec(bytes, mode).context("fetch wizard spec")?;
+    wizard_ops::decode_component_qa_spec(spec.qa_spec_cbor.as_slice(), mode)
+        .context("decode ComponentQaSpec")
 }
 
-fn load_component_describe(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let describe_bytes = instance.describe(&mut store).context("call describe")?;
-    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+fn load_component_describe(_engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
+    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
+        .context("fetch wizard spec")?;
+    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
 }
 
 fn apply_component_answers(
-    engine: &Engine,
+    _engine: &Engine,
     bytes: &[u8],
-    mode: HostQaMode,
+    mode: wizard_ops::WizardMode,
     current_config: &[u8],
     answers: &[u8],
 ) -> Result<Vec<u8>> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    instance
-        .apply_answers(&mut store, mode, current_config, answers)
+    let spec = wizard_ops::fetch_wizard_spec(bytes, mode).context("fetch wizard spec")?;
+    wizard_ops::apply_wizard_answers(bytes, spec.abi, mode, current_config, answers)
         .context("call apply_answers")
 }
 

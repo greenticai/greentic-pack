@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:pack-validate@0.1.0;
+
+/// Validator entry points implemented by pack components.
+interface validator {
+  /// Pack-level diagnostics produced by validator components.
+  record diagnostic {
+    /// "info" | "warn" | "error".
+    severity: string,
+    code: string,
+    message: string,
+    path: option<string>,
+    hint: option<string>,
+  }
+
+  /// Inputs provided to validators when inspecting a pack archive.
+  record pack-inputs {
+    /// Raw `manifest.cbor` bytes from the pack.
+    manifest-cbor: list<u8>,
+    /// `sbom.json` payload as UTF-8.
+    sbom-json: string,
+    /// Flat list of file paths inside the pack archive.
+    file-index: list<string>,
+  }
+
+  /// Return true when this validator should run for the given pack.
+  applies: func(inputs: pack-inputs) -> bool;
+  /// Execute the validator and emit zero or more diagnostics.
+  validate: func(inputs: pack-inputs) -> list<diagnostic>;
+}
+
+world pack-validator {
+  export validator;
+}

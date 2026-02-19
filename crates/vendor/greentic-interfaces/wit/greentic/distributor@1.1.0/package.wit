@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:distributor-api@1.1.0;
+
+interface distributor {
+  use greentic:secrets-types/types@1.0.0.{secret-requirement};
+  use greentic:interfaces-types/types@0.1.0.{tenant-id};
+
+  /// Distributor environment identifier (opaque handle).
+  type distributor-environment-id = string;
+
+  /// Pack identifier.
+  type pack-id = string;
+
+  /// Component identifier.
+  type component-id = string;
+
+  /// Component readiness state within the distributor cache.
+  enum component-status {
+    pending,
+    ready,
+    failed,
+  }
+
+  /// Where the resolved component artifact can be fetched from.
+  record artifact-location {
+    /// e.g. "file", "oci", "internal".
+    kind: string,
+    /// Path, OCI reference, or internal handle.
+    value: string,
+  }
+
+  /// Summary of signing/verification status for the artifact.
+  record signature-summary {
+    verified: bool,
+    signer: string,
+    /// JSON string or opaque info from the distributor.
+    extra: string,
+  }
+
+  /// Cache metadata for the resolved component.
+  record cache-info {
+    size-bytes: u64,
+    /// ISO 8601 timestamp string.
+    last-used-utc: string,
+    /// ISO 8601 timestamp string.
+    last-refreshed-utc: string,
+  }
+
+  /// Request to resolve a component artifact.
+  record resolve-component-request {
+    tenant-id: tenant-id,
+    environment-id: distributor-environment-id,
+    pack-id: pack-id,
+    component-id: component-id,
+    /// Opaque semver/label string.
+    version: string,
+    /// Future-proofing metadata as JSON.
+    extra: string,
+  }
+
+  /// Response returned by the distributor.
+  record resolve-component-response {
+    component-status: component-status,
+    /// Opaque digest string (maps to ComponentDigest).
+    digest: string,
+    artifact-location: artifact-location,
+    signature-summary: signature-summary,
+    cache-info: cache-info,
+    /// Secret requirements the component/pack needs to run.
+    secret-requirements: list<secret-requirement>,
+  }
+
+  /// Metadata returned when resolving by a component reference string.
+  record resolve-ref-metadata {
+    component-status: component-status,
+    artifact-location: artifact-location,
+    signature-summary: signature-summary,
+    cache-info: cache-info,
+    secret-requirements: list<secret-requirement>,
+  }
+
+  /// Response returned by `resolve-ref`.
+  record resolve-ref-response {
+    /// Opaque digest string (maps to ComponentDigest).
+    digest: string,
+    metadata: resolve-ref-metadata,
+  }
+
+  /// Resolved artifact content.
+  variant artifact-source {
+    bytes(list<u8>),
+    path(string),
+  }
+
+  /// Resolve a component and return its cache status plus artifact location.
+  resolve-component: func(
+    req: resolve-component-request
+  ) -> resolve-component-response;
+
+  /// Resolve a component reference string to a digest + metadata.
+  resolve-ref: func(
+    ref: string
+  ) -> resolve-ref-response;
+
+  /// Fetch a resolved component artifact by digest.
+  get-by-digest: func(
+    digest: string
+  ) -> artifact-source;
+
+  /// Summarize pack/component availability as an opaque JSON string or label.
+  get-pack-status: func(
+    tenant-id: tenant-id,
+    environment-id: distributor-environment-id,
+    pack-id: pack-id
+  ) -> string;
+
+  /// Structured pack status payload with secret requirements.
+  record pack-status-response {
+    status: string,
+    secret-requirements: list<secret-requirement>,
+    /// Future-proofing metadata as JSON.
+    extra: string,
+  }
+
+  /// Fetch pack status with typed metadata.
+  get-pack-status-v2: func(
+    tenant-id: tenant-id,
+    environment-id: distributor-environment-id,
+    pack-id: pack-id
+  ) -> pack-status-response;
+
+  /// Optional pre-warm of a pack in the distributor cache.
+  warm-pack: func(
+    tenant-id: tenant-id,
+    environment-id: distributor-environment-id,
+    pack-id: pack-id
+  );
+}
+
+world distributor-api {
+  export distributor;
+}
+
+/// Import-facing view so guests can call into a distributor host.
+world distributor-api-imports {
+  import distributor;
+}

@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: MIT
+
+// ------------------------------------------------------------
+// DEPRECATED
+//
+// This package is deprecated and kept for backward compatibility.
+//
+// Reason:
+//   Superseded by the CBOR-based, self-describing model.
+//
+// Replacement:
+//   greentic:pack@0.6.0
+//
+// Status:
+//   No new development. No new versions will be published.
+// ------------------------------------------------------------
+// SPDX-License-Identifier: MIT
+
+package greentic:pack-export-v1@0.1.0;
+
+interface pack-api {
+  use greentic:common-types/types@0.1.0.{flow-kind};
+  use greentic:interfaces-types/types@0.1.0.{tenant-ctx};
+
+  /// Pack classification aligned with greentic_types::PackKind.
+  enum pack-kind {
+    application,
+    provider,
+    infrastructure,
+    library,
+  }
+
+  /// Minimal pack metadata descriptor.
+  record pack-descriptor {
+    pack-id: string,
+    version: string,
+    kind: pack-kind,
+    publisher: string,
+  }
+
+  /// Flow metadata descriptor.
+  record flow-descriptor {
+    id: string,
+    kind: flow-kind,
+    tags: list<string>,
+    entrypoints: list<string>,
+  }
+
+  /// Returns pack-level metadata.
+  get-pack-descriptor: func() -> pack-descriptor;
+
+  /// Lists flows embedded in this pack.
+  list-flows: func() -> list<flow-descriptor>;
+
+  /// Returns a host-serialized JSON representation of the flow.
+  get-flow-json: func(flow-id: string) -> string;
+}
+
+world pack-host {
+  export pack-api;
+}

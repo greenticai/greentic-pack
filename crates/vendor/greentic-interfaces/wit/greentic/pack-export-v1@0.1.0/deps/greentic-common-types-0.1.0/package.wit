@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:common-types@0.1.0;
+
+interface types {
+  /// Flow categories aligned with greentic_types::FlowKind.
+  enum flow-kind {
+    messaging,
+    event,
+    component-config,
+    job,
+    http,
+  }
+
+  /// Minimal tenant context propagated across calls.
+  record tenant-ctx {
+    env: string,
+    tenant-id: string,
+    team-id: option<string>,
+    user-id: option<string>,
+    i18n-id: option<string>,
+    session-id: option<string>,
+    flow-id: option<string>,
+    node-id: option<string>,
+  }
+
+  /// Component execution outcome status.
+  enum outcome-status {
+    done,
+    pending,
+    error,
+  }
+
+  /// Structured component outcome with routing code + JSON payloads.
+  record component-outcome {
+    status: outcome-status,
+    code: option<string>,
+    payload-json: string,
+    metadata-json: option<string>,
+  }
+}
+
+world common {
+  export types;
+}

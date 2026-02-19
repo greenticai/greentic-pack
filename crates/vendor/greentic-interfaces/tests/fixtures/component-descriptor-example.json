@@ -1,0 +1,78 @@
+{
+  "name": "demo-descriptor",
+  "version": "0.6.0",
+  "ops": [
+    {
+      "name": "render_plan",
+      "summary": "Render the flow plan payload.",
+      "input": {
+        "schema": {
+          "inline_cbor": [166, 101, 99, 111, 110, 116, 114, 97, 99, 116, 95, 105, 100, 1, 105, 97, 99, 116, 105, 111, 110, 95, 105, 100, 1, 99, 104, 104, 111, 111, 115, 116, 115, 2]
+        },
+        "content_type": "application/cbor"
+      },
+      "output": {
+        "schema": {
+          "ref_pack_path": "schemas/render-plan-output.cbor"
+        },
+        "content_type": "application/cbor"
+      },
+      "examples": [
+        {
+          "title": "plan request",
+          "input_cbor": [162, 101, 99, 111, 114, 101, 115, 101, 0, 107, 100, 114, 101, 110, 100, 101, 114],
+          "output_cbor": [160],
+          "notes": "Empty plan success."
+        }
+      ]
+    },
+    {
+      "name": "send_payload",
+      "summary": "Send the encoded payload to the target.",
+      "input": {
+        "schema": {
+          "cbor_schema_id": "greentic:schema/send-payload-input"
+        },
+        "content_type": "application/cbor"
+      },
+      "output": {
+        "schema": {
+          "inline_cbor": [130, 101, 115, 116, 97, 116, 117, 115, 0, 102, 114, 101, 113, 117, 101, 115, 116, 73, 68, 1]
+        },
+        "content_type": "application/cbor"
+      },
+      "examples": [
+        {
+          "title": "delivery success",
+          "input_cbor": [162, 97, 111, 117, 116, 112, 117, 116, 0, 107],
+          "output_cbor": null
+        }
+      ]
+    }
+  ],
+  "setup": {
+    "qa_spec": {
+      "inline_cbor": [162, 102, 105, 101, 108, 100, 1, 115, 116, 114, 105, 110, 103, 2]
+    },
+    "answers_schema": {
+      "inline_cbor": [162, 102, 105, 108, 101, 115, 0, 130, 97, 116, 121, 112, 101]
+    },
+    "examples": [
+      {
+        "title": "demo answers",
+        "answers_cbor": [162, 102, 105, 101, 108, 100, 1, 104, 118, 97, 108, 117, 101, 65, 66, 67, 68]
+      }
+    ],
+    "outputs": [
+      {
+        "config_only": null
+      },
+      {
+        "template_scaffold": {
+          "template_ref": "templates/scaffold.yaml",
+          "output_layout": "stacked"
+        }
+      }
+    ]
+  }
+}

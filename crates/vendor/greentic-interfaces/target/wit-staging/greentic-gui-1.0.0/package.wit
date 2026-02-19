@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:gui@1.0.0;
+
+/// Server-rendered GUI fragment API for Greentic-GUI.
+interface fragment-api {
+  /// Context passed by the host to fragment renderers.
+  record fragment-context {
+    /// Tenant context (JSON-encoded).
+    tenant-ctx: string,
+    /// User context (JSON-encoded).
+    user-ctx: string,
+    /// Current route/path being rendered.
+    route: string,
+    /// Session identifier, if any.
+    session-id: string,
+  }
+
+  /// Render a named fragment into HTML.
+  render-fragment: func(fragment-id: string, ctx: fragment-context)
+    -> result<string, string>;
+}
+
+world gui-fragment {
+  export fragment-api;
+}

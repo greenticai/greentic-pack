@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MIT
+
+package greentic:secrets-types@1.0.0;
+
+/// Canonical secret metadata shared across Greentic surfaces.
+interface types {
+  /// Secret identifier used across manifests and bindings.
+  type secret-key = string;
+
+  /// Resolution scope (environment/tenant/team).
+  record secret-scope {
+    env: string,
+    tenant: string,
+    team: option<string>,
+  }
+
+  /// Preferred secret content format.
+  enum secret-format {
+    bytes,
+    text,
+    json,
+  }
+
+  /// Structured secret requirement surfaced to tooling and hosts.
+  record secret-requirement {
+    /// Logical key the runtime should resolve.
+    key: secret-key,
+    /// Whether the secret is mandatory for execution.
+    required: bool,
+    /// Optional description for operator-facing tooling.
+    description: option<string>,
+    /// Expected scope for resolution (environment/tenant/team).
+    scope: option<secret-scope>,
+    /// Preferred secret format when known.
+    format: option<secret-format>,
+    /// Optional JSON Schema fragment describing the value shape.
+    schema: option<string>,
+    /// Example payloads for documentation.
+    examples: list<string>,
+  }
+}
+
+world secrets-types {
+  export types;
+}

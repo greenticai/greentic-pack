@@ -3,6 +3,9 @@
 This document describes every `greentic-pack` command and flag, along with
 common usage patterns. The CLI is published as the `greentic-pack` binary.
 
+Compatibility-only aliases and migration switches are documented in
+`docs/vision/legacy.md`.
+
 ## Command structure
 
 ```
@@ -50,9 +53,7 @@ greentic-pack build --in <DIR> [options]
 Options:
 - `--in <DIR>`: pack root containing `pack.yaml`.
 - `--no-update`: skip the pre-build `update` sync.
-- `--out <FILE>`: write a stub Wasm component (legacy).
 - `--manifest <FILE>`: manifest output path (default: `dist/manifest.cbor`).
-- `--sbom <FILE>`: SBOM output path (legacy JSON stub).
 - `--gtpack-out <FILE>`: `.gtpack` output (default: `dist/<pack_dir>.gtpack`).
 - `--lock <FILE>`: pack.lock.cbor path (default: `<pack_dir>/pack.lock.cbor`).
 - `--bundle <cache|none>`: embed component artifacts (`cache`) or keep refs only (`none`).
@@ -61,7 +62,6 @@ Options:
 - `--default-secret-scope <ENV/TENANT[/TEAM]>`: fill missing secret scopes.
 - `--allow-oci-tags`: allow tag-based OCI refs in extensions.
 - `--no-extra-dirs`: only include `flows/`, `components/`, and `assets/` in the archive (skip extra directories and root files).
-- `--allow-pack-schema`: migration-only escape hatch that allows deriving component manifest/schema from `pack.yaml` when component manifests are missing (default is hard-error on 0.6 path).
 
 Example:
 
@@ -137,9 +137,6 @@ greentic-pack qa --pack <DIR> --mode <default|setup|update|remove> [options]
 Options:
 - `--pack <DIR>`: pack root (default: `.`).
 - `--mode <MODE>`: QA mode to run (default: `default`).
-  - `upgrade` is accepted as a deprecated alias for `update` and prints a warning.
-  - CLI output and persisted docs always normalize this to `update`.
-  - Alias removal is planned for a future `0.6.x/0.7` release (no fixed date/version yet).
 - `--answers <FILE_OR_DIR>`: override answers location (file or directory).
 - `--locale <BCP47>`: locale tag for i18n lookup (default: `en`).
 - `--non-interactive`: disable prompts; fail if required answers missing.
@@ -165,7 +162,7 @@ qa/pack/update.cbor
 qa/pack/remove.cbor
 ```
 
-### `doctor` (alias: `inspect`)
+### `doctor`
 
 Inspect a pack archive or source directory.
 
@@ -210,6 +207,9 @@ Options:
 
 Inspect or validate provider extensions.
 
+LEGACY TRACK: provider-extension/schema-core guidance is maintained for
+compatibility. For v0.6-first authoring, start from `docs/usage.md`.
+
 ```
 greentic-pack providers <subcommand> [options]
 ```
@@ -222,6 +222,9 @@ Subcommands:
 ### `add-extension provider`
 
 Add or amend the provider extension entry stored in `pack.yaml`.
+
+LEGACY TRACK: this command updates provider-extension/schema-core metadata used
+by existing deployments. For details, see `docs/vision/legacy.md`.
 
 ```
 greentic-pack add-extension provider [options]
@@ -325,3 +328,4 @@ greentic-pack gui loveable-convert --pack-kind layout \
 - `docs/pack-format.md` for `.gtpack` internals.
 - `docs/provider_extension.md` for provider metadata.
 - `docs/pack_extensions_components.md` for component source extensions.
+- `docs/vision/legacy.md` for deprecated aliases and migration-only switches.
