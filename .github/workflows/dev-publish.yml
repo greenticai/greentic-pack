@@ -75,6 +75,21 @@ jobs:
           toolchain: 1.90.0
           override: true
           components: rustfmt, clippy
+      - name: Ensure cargo-binstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.cargo/bin/cargo-binstall" ]; then
+            cargo install cargo-binstall --locked
+          fi
+      - name: Install greentic tooling for E2E tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add wasm32-wasip2
+          BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
+          BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force
+          BINSTALL_DISABLE_STRATEGIES=compile cargo binstall wasm-tools -y --force
       - uses: Swatinem/rust-cache@v2
       - name: Lint & Test
         run: |
