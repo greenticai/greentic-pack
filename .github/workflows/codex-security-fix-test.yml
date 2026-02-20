@@ -30,7 +30,7 @@ jobs:
       - name: Fetch open Dependabot alerts
         id: alerts
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           MAX_ALERTS: ${{ github.event.inputs.max_alerts }}
@@ -81,24 +81,12 @@ jobs:
       - name: Run Codex remediation
         if: steps.alerts.outputs.count != '0'
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || secrets.CODEX_OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          echo "Debug: Checking OPENAI_API_KEY"
           if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "Error: OPENAI_API_KEY is empty"
-          else
-            echo "OPENAI_API_KEY is set. Length: ${#OPENAI_API_KEY}"
-            echo "Prefix: ${OPENAI_API_KEY:0:12}..."
-          fi
-          
-          echo "Debug: Testing API key validity..."
-          if curl -s -f -o /dev/null -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models; then
-             echo "Debug: API key is VALID (models endpoint accessible)"
-          else
-             echo "Debug: API key is INVALID or REVOKED (curl failed)"
-             # Print response body for more details (be careful not to leak key if it was in header, but here we just show body)
-             curl -s -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models || true
+            echo "::error::OPENAI_API_KEY secret is missing. Configure OPENAI_API_KEY (or CODEX_OPENAI_API_KEY) in repository/organization secrets."
+            exit 1
           fi
 
           codex exec --full-auto "$(cat codex-prompt.txt)"
