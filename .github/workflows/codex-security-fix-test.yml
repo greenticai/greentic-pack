@@ -78,16 +78,37 @@ jobs:
         if: steps.alerts.outputs.count != '0'
         run: npm install -g @openai/codex
 
-      - name: Run Codex remediation
+      - name: Resolve OpenAI API key
         if: steps.alerts.outputs.count != '0'
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || secrets.CODEX_OPENAI_API_KEY }}
+          OPENAI_API_KEY_RAW: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_OPENAI_API_KEY_RAW: ${{ secrets.CODEX_OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          key="${OPENAI_API_KEY_RAW:-}"
+          if [ -z "$key" ]; then
+            key="${CODEX_OPENAI_API_KEY_RAW:-}"
+          fi
+          key="$(printf '%s' "$key" | tr -d '\r\n')"
+          if [ -z "$key" ]; then
+            echo "::error::Missing OpenAI key. Configure OPENAI_API_KEY (or CODEX_OPENAI_API_KEY) in repo/org secrets."
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "OPENAI_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Run Codex remediation
+        if: steps.alerts.outputs.count != '0'
         run: |
           set -euo pipefail
           if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "::error::OPENAI_API_KEY secret is missing. Configure OPENAI_API_KEY (or CODEX_OPENAI_API_KEY) in repository/organization secrets."
+            echo "::error::OPENAI_API_KEY is empty after Resolve OpenAI API key step."
             exit 1
           fi
+          curl -sS -f https://api.openai.com/v1/responses \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"gpt-4.1-mini","input":"ping","max_output_tokens":1}' > /dev/null
 
           codex exec --full-auto "$(cat codex-prompt.txt)"
 
