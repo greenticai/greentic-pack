@@ -347,6 +347,20 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
             &mut has_errors,
         );
 
+        if let Err(err) = WasmtimeComponent::from_binary(&engine, &wasm.bytes) {
+            has_errors = true;
+            diagnostics.push(component_diag(
+                component_id,
+                Severity::Error,
+                "PACK_LOCK_COMPONENT_DECODE_FAILED",
+                format!("component bytes are not a valid component: {err}"),
+                Some(format!("components/{component_id}")),
+                Some("rebuild the pack with a valid component artifact".to_string()),
+                Value::Null,
+            ));
+            continue;
+        }
+
         if !describe_resolution.requires_typed_instance {
             diagnostics.push(component_diag(
                 component_id,
