@@ -1256,6 +1256,9 @@ mod tests {
             .expect_err("missing required field must fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("$.enabled"), "missing path in: {msg}");
-        assert!(msg.contains("schema validation"), "missing validation text in: {msg}");
+        assert!(
+            msg.contains("schema validation"),
+            "missing validation text in: {msg}"
+        );
     }
 }
