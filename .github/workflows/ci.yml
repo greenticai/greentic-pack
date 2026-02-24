@@ -22,12 +22,12 @@ jobs:
       CARGO_TARGET_DIR: target/ci
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-rust-1.90-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-rust-1.91-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -37,14 +37,14 @@ jobs:
       CARGO_TARGET_DIR: target/ci
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: clippy
       - name: Check for duplicate canonical WIT
         run: bash ci/check_no_duplicate_canonical_wit.sh
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-rust-1.90-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-rust-1.91-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
@@ -55,7 +55,7 @@ jobs:
       TMPDIR: /tmp/greentic-pack-tmp
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
       - name: Check for duplicate canonical WIT
         run: bash ci/check_no_duplicate_canonical_wit.sh
       - name: Install mold + clang (Linux only)
@@ -74,7 +74,7 @@ jobs:
           EOF
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-rust-1.90-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-rust-1.91-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Install mold + clang (Linux only)
         if: runner.os == 'Linux'
         run: |
@@ -96,7 +96,7 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-binstall
             ~/.cargo/.binstall
-          key: cargo-binstall-${{ runner.os }}-rust-1.90.0
+          key: cargo-binstall-${{ runner.os }}-rust-1.91.0
       - name: Ensure cargo-binstall
         run: |
           if [ ! -x "$HOME/.cargo/bin/cargo-binstall" ]; then
@@ -112,8 +112,8 @@ jobs:
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall wasm-tools -y --force
-      - run: cargo build --workspace --all-features
-      - run: cargo test --workspace --all-features -- --nocapture
+      - run: cargo build --workspace --all-features --locked
+      - run: cargo test --workspace --all-features --locked -- --nocapture
 
   publish:
     name: Publish crates
@@ -128,7 +128,7 @@ jobs:
       CARGO_TARGET_DIR: target/ci
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
       - name: Install mold + clang (Linux only)
         if: runner.os == 'Linux'
         run: |
@@ -145,7 +145,7 @@ jobs:
           EOF
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-rust-1.90-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-rust-1.91-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Publish changed crates
         uses: katyo/publish-crates@v2
         with:
@@ -181,14 +181,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           targets: ${{ matrix.target }}
       - name: Install target
         run: rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-${{ runner.os }}-${{ matrix.target }}-rust-1.90-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: release-${{ runner.os }}-${{ matrix.target }}-rust-1.91-${{ hashFiles('**/Cargo.lock') }}
       - name: Install mold + clang (Linux only)
         if: matrix.os == 'ubuntu-latest'
         run: |
