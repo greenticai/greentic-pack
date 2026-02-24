@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_interfaces_host::component_v0_6::instantiate_component_v0_6;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, write_pack_lock};
 use greentic_pack::resolver::{ComponentResolver, ResolveReq, ResolvedComponent};
 use greentic_types::cbor::canonical;
@@ -301,24 +300,7 @@ where
 }
 
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    match instantiate_component_v0_6(&mut store, &component, &linker) {
-        Ok(instance) => {
-            let describe_bytes = instance.describe(&mut store).context("call describe")?;
-            canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
-        }
-        Err(err) => {
-            let wrapped = err.context("instantiate component-v0-v6-v0");
-            if should_fallback_to_untyped_describe(&wrapped) {
-                return describe_component_untyped(engine, bytes);
-            }
-            Err(wrapped)
-        }
-    }
+    describe_component_untyped(engine, bytes)
 }
 
 fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
@@ -353,10 +335,6 @@ fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<Component
         .call(&mut store, ())
         .context("call component-descriptor.describe")?;
     canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
-}
-
-fn should_fallback_to_untyped_describe(err: &anyhow::Error) -> bool {
-    err.to_string().contains("instantiate component-v0-v6-v0")
 }
 
 fn load_describe_from_cache_path(path: Option<&Path>) -> Result<Option<ComponentDescribe>> {

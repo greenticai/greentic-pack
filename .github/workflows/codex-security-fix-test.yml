@@ -30,7 +30,11 @@ jobs:
       - name: Fetch open Dependabot alerts
         id: alerts
         env:
+<<<<<<< HEAD
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+=======
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+>>>>>>> master
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           MAX_ALERTS: ${{ github.event.inputs.max_alerts }}
@@ -74,6 +78,7 @@ jobs:
 
           cat dependabot-alerts.json >> codex-prompt.txt
 
+<<<<<<< HEAD
       - name: Install Codex CLI
         if: steps.alerts.outputs.count != '0'
         run: npm install -g @openai/codex
@@ -85,6 +90,15 @@ jobs:
         run: |
           set -euo pipefail
           codex exec --full-auto "$(cat codex-prompt.txt)"
+=======
+      - name: Run Codex remediation
+        if: steps.alerts.outputs.count != '0'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY || secrets.CODEX_OPENAI_API_KEY }}
+          prompt-file: codex-prompt.txt
+          codex-args: '["--full-auto"]'
+>>>>>>> master
 
       - name: Commit and push fixes
         if: steps.alerts.outputs.count != '0'
@@ -114,4 +128,8 @@ jobs:
             dependabot-alerts.json
             codex-prompt.txt
             SECURITY_FIX_REPORT.md
+<<<<<<< HEAD
           if-no-files-found: ignore
+=======
+          if-no-files-found: ignore
+>>>>>>> master

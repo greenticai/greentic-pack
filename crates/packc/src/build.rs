@@ -2,7 +2,7 @@ use crate::cli::resolve::{self, ResolveArgs};
 use crate::config::{
     AssetConfig, ComponentConfig, ComponentOperationConfig, FlowConfig, PackConfig,
 };
-use crate::extensions::validate_components_extension;
+use crate::extensions::{validate_capabilities_extension, validate_components_extension};
 use crate::flow_resolve::load_flow_resolve_summary;
 use crate::runtime::{NetworkPolicy, RuntimeContext};
 use anyhow::{Context, Result, anyhow};
@@ -177,6 +177,12 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
         "loaded pack.yaml"
     );
     validate_components_extension(&config.extensions, opts.allow_oci_tags)?;
+    let known_component_ids = config
+        .components
+        .iter()
+        .map(|component| component.id.clone())
+        .collect::<Vec<_>>();
+    validate_capabilities_extension(&config.extensions, &opts.pack_dir, &known_component_ids)?;
 
     let secret_requirements_override =
         resolve_secret_requirements_override(&opts.pack_dir, opts.secrets_req.as_ref());
