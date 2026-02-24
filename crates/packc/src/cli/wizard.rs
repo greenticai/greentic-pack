@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_interfaces_host::component_v0_6::{ComponentV0_6, instantiate_component_v0_6};
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, read_pack_lock, write_pack_lock};
 use greentic_pack::resolver::{ComponentResolver, FixtureResolver};
 use greentic_types::cbor::canonical;
@@ -510,29 +509,48 @@ fn describe_component(
     use_cache: bool,
     source_path: Option<&Path>,
 ) -> Result<ComponentDescribe> {
-    let component = match WasmtimeComponent::from_binary(engine, bytes) {
-        Ok(component) => component,
+    match describe_component_untyped(engine, bytes) {
+        Ok(describe) => Ok(describe),
         Err(err) => {
             if use_cache && let Some(describe) = load_describe_from_cache_path(source_path)? {
                 return Ok(describe);
             }
-            return Err(err).context("decode component bytes");
+            Err(err)
         }
-    };
+    }
+}
+
+fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
+    let component =
+        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
     let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let describe_bytes = match instance.describe(&mut store) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            if use_cache && let Some(describe) = load_describe_from_cache_path(source_path)? {
-                return Ok(describe);
-            }
-            return Err(err).context("call describe");
-        }
-    };
+    let instance = linker
+        .instantiate(&mut store, &component)
+        .context("instantiate component root world")?;
+
+    let descriptor = [
+        "component-descriptor",
+        "greentic:component/component-descriptor",
+        "greentic:component/component-descriptor@0.6.0",
+    ]
+    .iter()
+    .find_map(|name| instance.get_export_index(&mut store, None, name))
+    .ok_or_else(|| anyhow!("missing exported descriptor instance"))?;
+    let describe_export = [
+        "describe",
+        "greentic:component/component-descriptor@0.6.0#describe",
+    ]
+    .iter()
+    .find_map(|name| instance.get_export_index(&mut store, Some(&descriptor), name))
+    .ok_or_else(|| anyhow!("missing exported describe function"))?;
+    let describe_func = instance
+        .get_typed_func::<(), (Vec<u8>,)>(&mut store, &describe_export)
+        .context("lookup component-descriptor.describe")?;
+    let (describe_bytes,) = describe_func
+        .call(&mut store, ())
+        .context("call component-descriptor.describe")?;
     canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
 }
 

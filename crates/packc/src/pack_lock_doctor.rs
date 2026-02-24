@@ -1,13 +1,12 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_interfaces_host::component_v0_6::exports::greentic::component::component_qa::QaMode;
-use greentic_interfaces_host::component_v0_6::{ComponentV0_6, instantiate_component_v0_6};
+use greentic_flow::wizard_ops::{WizardMode, decode_component_qa_spec, fetch_wizard_spec};
 use greentic_pack::PackLoad;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, read_pack_lock, validate_pack_lock};
 use greentic_types::cbor::canonical;
@@ -15,7 +14,6 @@ use greentic_types::pack::extensions::component_sources::{
     ArtifactLocationV1, ComponentSourceEntryV1, ComponentSourcesV1,
 };
 use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
-use greentic_types::schemas::component::v0_6_0::qa::ComponentQaSpec;
 use greentic_types::schemas::component::v0_6_0::{ComponentDescribe, schema_hash};
 use greentic_types::validate::{Diagnostic, Severity};
 use serde_json::{Value, json};
@@ -349,134 +347,56 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
             &mut has_errors,
         );
 
-        let mut store = wasmtime::Store::new(&engine, DescribeHostState::default());
-        let mut linker = Linker::new(&engine);
-        add_describe_host_imports(&mut linker)?;
-        let component = match WasmtimeComponent::from_binary(&engine, &wasm.bytes) {
-            Ok(component) => component,
-            Err(err) => {
-                has_errors = true;
-                diagnostics.push(component_diag(
-                    component_id,
-                    Severity::Error,
-                    "PACK_LOCK_COMPONENT_DECODE_FAILED",
-                    format!("component bytes are not a valid component: {err}"),
-                    Some(format!("components/{component_id}")),
-                    Some("rebuild the pack with a valid component artifact".to_string()),
-                    Value::Null,
-                ));
-                continue;
-            }
-        };
-        let instance: ComponentV0_6 = match instantiate_component_v0_6(
-            &mut store, &component, &linker,
-        ) {
-            Ok(instance) => instance,
-            Err(err) => {
-                if !describe_resolution.requires_typed_instance {
-                    diagnostics.push(component_diag(
-                            component_id,
-                            Severity::Warn,
-                            "PACK_LOCK_COMPONENT_WORLD_FALLBACK",
-                            format!(
-                                "typed component instantiation failed ({err}); describe was resolved via fallback and qa/i18n contract checks were skipped"
-                            ),
-                            Some(format!("components/{component_id}")),
-                            Some(
-                                "rebuild component to export greentic:component/component-v0-v6-v0@0.6.0"
-                                    .to_string(),
-                            ),
-                            Value::Null,
-                        ));
-                    continue;
-                }
-                has_errors = true;
-                diagnostics.push(component_diag(
-                    component_id,
-                    Severity::Error,
-                    "PACK_LOCK_COMPONENT_INSTANTIATE_FAILED",
-                    format!("failed to instantiate component: {err}"),
-                    Some(format!("components/{component_id}")),
-                    Some("ensure the component exports greentic:component@0.6.0".to_string()),
-                    Value::Null,
-                ));
-                continue;
-            }
-        };
+        if !describe_resolution.requires_typed_instance {
+            diagnostics.push(component_diag(
+                component_id,
+                Severity::Warn,
+                "PACK_LOCK_COMPONENT_WORLD_FALLBACK",
+                "describe was resolved via fallback; qa/i18n contract checks were skipped"
+                    .to_string(),
+                Some(format!("components/{component_id}")),
+                None,
+                Value::Null,
+            ));
+        }
 
-        let qa_modes = [
-            (QaMode::Default, "default"),
-            (QaMode::Setup, "setup"),
-            (QaMode::Update, "update"),
-            (QaMode::Remove, "remove"),
-        ];
-        let mut qa_i18n_keys = BTreeSet::new();
-        for (mode, label) in qa_modes {
-            let bytes = match instance.qa_spec(&mut store, mode) {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    has_errors = true;
-                    diagnostics.push(component_diag(
-                        component_id,
-                        Severity::Error,
-                        "PACK_LOCK_QA_SPEC_MISSING",
-                        format!("qa_spec() failed for {label}: {err}"),
-                        Some(format!("components/{component_id}/qa/{label}")),
-                        Some("ensure the component exports component-qa for all modes".to_string()),
-                        Value::Null,
-                    ));
-                    continue;
-                }
-            };
-            let spec: ComponentQaSpec = match canonical::from_cbor(&bytes) {
+        for (mode, label) in [
+            (WizardMode::Default, "default"),
+            (WizardMode::Setup, "setup"),
+            (WizardMode::Update, "update"),
+            (WizardMode::Remove, "remove"),
+        ] {
+            let spec = match fetch_wizard_spec(&wasm.bytes, mode) {
                 Ok(spec) => spec,
                 Err(err) => {
                     has_errors = true;
                     diagnostics.push(component_diag(
                         component_id,
                         Severity::Error,
-                        "PACK_LOCK_QA_SPEC_DECODE_FAILED",
-                        format!("qa_spec() decode failed for {label}: {err}"),
+                        "PACK_LOCK_QA_SPEC_MISSING",
+                        format!("wizard qa_spec fetch failed for {label}: {err}"),
                         Some(format!("components/{component_id}/qa/{label}")),
-                        Some("ensure qa_spec returns a canonical ComponentQaSpec".to_string()),
+                        Some(
+                            "ensure setup contract and setup.apply_answers are exported"
+                                .to_string(),
+                        ),
                         Value::Null,
                     ));
                     continue;
                 }
             };
-            qa_i18n_keys.extend(spec.i18n_keys());
-        }
-
-        let i18n_keys = match instance.i18n_keys(&mut store) {
-            Ok(keys) => keys,
-            Err(err) => {
+            if let Err(err) = decode_component_qa_spec(&spec.qa_spec_cbor, mode) {
                 has_errors = true;
                 diagnostics.push(component_diag(
                     component_id,
                     Severity::Error,
-                    "PACK_LOCK_I18N_KEYS_MISSING",
-                    format!("i18n-keys() failed: {err}"),
-                    Some(format!("components/{component_id}/i18n-keys")),
-                    Some("component-i18n.i18n-keys is required for 0.6.0 components".to_string()),
+                    "PACK_LOCK_QA_SPEC_DECODE_FAILED",
+                    format!("qa_spec decode failed for {label}: {err}"),
+                    Some(format!("components/{component_id}/qa/{label}")),
+                    Some("ensure qa_spec is valid canonical CBOR/legacy JSON".to_string()),
                     Value::Null,
                 ));
-                continue;
             }
-        };
-
-        let i18n_keys: BTreeSet<_> = i18n_keys.into_iter().collect();
-        let missing: Vec<_> = qa_i18n_keys.difference(&i18n_keys).cloned().collect();
-        if !missing.is_empty() {
-            has_errors = true;
-            diagnostics.push(component_diag(
-                component_id,
-                Severity::Error,
-                "PACK_LOCK_I18N_KEYS_INCOMPLETE",
-                "qa spec references i18n keys missing from i18n-keys()".to_string(),
-                Some(format!("components/{component_id}/i18n-keys")),
-                Some("add missing i18n keys to component-i18n".to_string()),
-                json!({ "missing_keys": missing }),
-            ));
         }
     }
 
@@ -752,15 +672,7 @@ fn should_fallback_to_untyped_describe(err: &anyhow::Error) -> bool {
 }
 
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
-    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
-    let mut linker = Linker::new(engine);
-    add_describe_host_imports(&mut linker)?;
-    let instance: ComponentV0_6 = instantiate_component_v0_6(&mut store, &component, &linker)
-        .context("instantiate component-v0-v6-v0")?;
-    let describe_bytes = instance.describe(&mut store).context("call describe")?;
-    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
+    describe_component_untyped(engine, bytes)
 }
 
 fn load_describe_from_cache(
