@@ -36,3 +36,39 @@ packc inspect --in . --allow-oci-tags
 ```
 
 Archives (`.gtpack`) preserve the extension exactly; no download/pull occurs. Resolution is expected to be handled by installers/distributors that understand this extension.
+
+## Capabilities Extension (v1)
+
+Use `extensions.greentic.ext.capabilities.v1` to declare capability offers consumed by operator/runtime capability resolution.
+
+### Shape
+
+```yaml
+extensions:
+  greentic.ext.capabilities.v1:
+    kind: greentic.ext.capabilities.v1
+    version: 1.0.0
+    inline:
+      schema_version: 1
+      offers:
+        - offer_id: policy.pre.10
+          cap_id: greentic.cap.op_hook.pre
+          version: v1
+          provider:
+            component_ref: policy.hook
+            op: hook.evaluate
+          priority: 10
+          requires_setup: false
+          applies_to:
+            op_names: [send]
+```
+
+### Validation rules
+
+- `schema_version` must be `1`.
+- Each offer `provider.component_ref` must match an id from `components[].id` in `pack.yaml`.
+- If `requires_setup: true`:
+  - `setup` must be present;
+  - `setup.qa_ref` must be non-empty and reference an existing file under the pack root.
+
+These checks run in `greentic-pack build`/`lint` paths for source packs.
