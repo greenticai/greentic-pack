@@ -41,9 +41,9 @@ pkcs8 = { version = "0.10", features = ["pem"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
-greentic-types = { version = "0.4" }
-greentic-flow = { version = "0.4" }
-greentic-interfaces-host = { version = "0.4" }
+greentic-types = { version = ">=0.4.55, <0.5" }
+greentic-flow = { version = ">=0.4.48, <0.5" }
+greentic-interfaces-host = { version = ">=0.4.106, <0.5" }
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
 greentic-config-types = "0.4"
 greentic-config = "0.4"
