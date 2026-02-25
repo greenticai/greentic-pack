@@ -21,9 +21,8 @@ fn workspace_root() -> PathBuf {
 fn has_external_guest_wit_mismatch(output: &str) -> bool {
     output.contains("type `host-error` not defined in interface")
         || output.contains("type 'host-error' not defined in interface")
-        || output.contains(
-            "could not find `greentic_component_0_6_0_component_v0_v6_v0` in `bindings`",
-        )
+        || output
+            .contains("could not find `greentic_component_0_6_0_component_v0_v6_v0` in `bindings`")
 }
 
 fn write_pack(dir: &Path, wasm_contents: &[u8]) {
