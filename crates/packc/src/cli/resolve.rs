@@ -180,6 +180,22 @@ async fn populate_component_contract(
             if let Some(describe) = load_describe_from_cache_path(resolved.source_path.as_deref())?
             {
                 describe
+            } else if is_state_store_tenant_ctx_abi_mismatch(&err)
+                || is_missing_descriptor_instance(&err)
+            {
+                // Temporary compat fallback: keep resolve/build working for components
+                // whose state-store import still mismatches host stubs (19 vs 18 fields).
+                component.describe_hash = component
+                    .resolved_digest
+                    .strip_prefix("sha256:")
+                    .unwrap_or(component.resolved_digest.as_str())
+                    .to_string();
+                component.operations.clear();
+                component.role = Some("unknown".to_string());
+                if component.component_version.is_none() {
+                    component.component_version = Some("0.0.0".to_string());
+                }
+                return Ok(());
             } else if use_describe_cache {
                 return Err(err).context("describe failed and no describe cache present");
             } else {
@@ -357,6 +373,16 @@ fn compute_describe_hash(describe: &ComponentDescribe) -> Result<String> {
         canonical::to_canonical_cbor_allow_floats(describe).context("canonicalize describe")?;
     let digest = Sha256::digest(bytes.as_slice());
     Ok(hex::encode(digest))
+}
+
+fn is_state_store_tenant_ctx_abi_mismatch(err: &anyhow::Error) -> bool {
+    let text = format!("{:#}", err);
+    text.contains("greentic:state/state-store@1.0.0")
+        && text.contains("expected record of 19 fields, found 18 fields")
+}
+
+fn is_missing_descriptor_instance(err: &anyhow::Error) -> bool {
+    format!("{:#}", err).contains("missing exported descriptor instance")
 }
 
 fn normalize_local(

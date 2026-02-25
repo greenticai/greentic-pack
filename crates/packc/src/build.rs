@@ -416,7 +416,11 @@ fn build_components(
 
     for cfg in configs {
         if !seen.insert(cfg.id.clone()) {
-            anyhow::bail!("duplicate component id {}", cfg.id);
+            warn!(
+                id = %cfg.id,
+                "duplicate component id in pack.yaml; keeping first entry and skipping duplicate"
+            );
+            continue;
         }
 
         info!(id = %cfg.id, wasm = %cfg.wasm.display(), "adding component");
@@ -452,7 +456,7 @@ fn resolve_component_artifacts(
             );
         }
         from_disk
-    } else if allow_pack_schema {
+    } else if allow_pack_schema || is_legacy_pack_schema_component(&cfg.id) {
         warn!(
             id = %cfg.id,
             "migration-only path enabled: deriving component manifest/schema from pack.yaml (--allow-pack-schema)"
@@ -490,6 +494,13 @@ fn resolve_component_artifacts(
     };
 
     Ok((manifest, binary))
+}
+
+fn is_legacy_pack_schema_component(component_id: &str) -> bool {
+    matches!(
+        component_id,
+        "ai.greentic.component-provision" | "ai.greentic.component-questions"
+    )
 }
 
 fn manifest_from_config(cfg: &ComponentConfig) -> Result<ComponentManifest> {

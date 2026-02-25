@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{Context, Result};
-use greentic_interfaces_host::state::greentic::state::state_store::{
-    self as state_store_v1, Host as StateStoreHost,
+use greentic_interfaces_wasmtime::host_helpers::v1::state_store::{
+    self as state_store_v1, StateStoreError, StateStoreHost,
 };
-use wasmtime::component::{HasSelf, Linker};
+use wasmtime::component::Linker;
 use wasmtime_wasi::p2::add_to_linker_sync;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
@@ -38,7 +38,7 @@ impl StateStoreHost for DescribeHostState {
         &mut self,
         _key: state_store_v1::StateKey,
         _ctx: Option<state_store_v1::TenantCtx>,
-    ) -> std::result::Result<Vec<u8>, state_store_v1::HostError> {
+    ) -> std::result::Result<Vec<u8>, StateStoreError> {
         Ok(Vec::new())
     }
 
@@ -47,7 +47,7 @@ impl StateStoreHost for DescribeHostState {
         _key: state_store_v1::StateKey,
         _bytes: Vec<u8>,
         _ctx: Option<state_store_v1::TenantCtx>,
-    ) -> std::result::Result<state_store_v1::OpAck, state_store_v1::HostError> {
+    ) -> std::result::Result<state_store_v1::OpAck, StateStoreError> {
         Ok(state_store_v1::OpAck::Ok)
     }
 
@@ -55,17 +55,14 @@ impl StateStoreHost for DescribeHostState {
         &mut self,
         _key: state_store_v1::StateKey,
         _ctx: Option<state_store_v1::TenantCtx>,
-    ) -> std::result::Result<state_store_v1::OpAck, state_store_v1::HostError> {
+    ) -> std::result::Result<state_store_v1::OpAck, StateStoreError> {
         Ok(state_store_v1::OpAck::Ok)
     }
 }
 
 pub fn add_describe_host_imports(linker: &mut Linker<DescribeHostState>) -> Result<()> {
     add_to_linker_sync(linker).context("register wasi preview2 describe host stubs")?;
-    state_store_v1::add_to_linker::<DescribeHostState, HasSelf<DescribeHostState>>(
-        linker,
-        |host: &mut DescribeHostState| host,
-    )
-    .context("register state-store@1.0.0 describe host stub")?;
+    state_store_v1::add_state_store_to_linker(linker, |host: &mut DescribeHostState| host)
+        .context("register state-store@1.0.0 describe host stub")?;
     Ok(())
 }

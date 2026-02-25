@@ -1610,6 +1610,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "greentic-interfaces-wasmtime"
+version = "0.4.106"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8824ff80dbb1c8d8afa3088bbb8b905f43101a8676ac2e9e5744248007160d42"
+dependencies = [
+ "anyhow",
+ "camino",
+ "greentic-interfaces",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "walkdir",
+ "wasmtime",
+]
+
+[[package]]
 name = "greentic-pack"
 version = "0.4.96"
 dependencies = [
@@ -1625,6 +1641,7 @@ dependencies = [
  "greentic-distributor-client",
  "greentic-flow",
  "greentic-interfaces-host",
+ "greentic-interfaces-wasmtime",
  "greentic-pack-lib",
  "greentic-telemetry",
  "greentic-types",

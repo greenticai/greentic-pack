@@ -44,6 +44,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 greentic-types = { version = ">=0.4.55, <0.5" }
 greentic-flow = { version = ">=0.4.48, <0.5" }
 greentic-interfaces-host = { version = ">=0.4.106, <0.5" }
+greentic-interfaces-wasmtime = { version = ">=0.4.106, <0.5" }
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
 greentic-config-types = "0.4"
 greentic-config = "0.4"

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
+use greentic_types::pack::extensions::capabilities::CapabilitiesExtensionV1;
 use greentic_types::pack_manifest::{ExtensionInline, ExtensionRef};
-use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -38,15 +38,36 @@ pub fn validate_capabilities_extension(
         }
     };
 
-    let payload: CapabilitiesExtensionV1 =
-        serde_json::from_value(value.clone()).context("invalid capabilities extension payload")?;
-    if payload.schema_version != 1 {
-        bail!(
-            "extensions[{CAPABILITIES_EXTENSION_KEY}] schema_version must be 1, found {}",
-            payload.schema_version
-        );
-    }
+    let payload = CapabilitiesExtensionV1::from_extension_value(value)
+        .context("invalid capabilities extension payload")?;
     for offer in &payload.offers {
+        if offer.offer_id.trim().is_empty() {
+            bail!("extensions[{CAPABILITIES_EXTENSION_KEY}] offer_id must not be empty");
+        }
+        if offer.cap_id.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` cap_id must not be empty",
+                offer.offer_id
+            );
+        }
+        if offer.version.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` version must not be empty",
+                offer.offer_id
+            );
+        }
+        if offer.provider.component_ref.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` provider.component_ref must not be empty",
+                offer.offer_id
+            );
+        }
+        if offer.provider.op.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` provider.op must not be empty",
+                offer.offer_id
+            );
+        }
         if !known_component_ids.contains(&offer.provider.component_ref) {
             bail!(
                 "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` references unknown provider.component_ref `{}`",
@@ -74,38 +95,6 @@ pub fn validate_capabilities_extension(
     }
 
     Ok(Some(payload))
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CapabilitiesExtensionV1 {
-    #[serde(default = "default_schema_version")]
-    pub schema_version: u32,
-    #[serde(default)]
-    pub offers: Vec<CapabilityOfferV1>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CapabilityOfferV1 {
-    pub offer_id: String,
-    pub provider: CapabilityProviderRefV1,
-    #[serde(default)]
-    pub requires_setup: bool,
-    #[serde(default)]
-    pub setup: Option<CapabilitySetupV1>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CapabilityProviderRefV1 {
-    pub component_ref: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CapabilitySetupV1 {
-    pub qa_ref: String,
-}
-
-const fn default_schema_version() -> u32 {
-    1
 }
 
 pub fn validate_components_extension(
@@ -341,6 +330,31 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("references unknown provider.component_ref"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn capabilities_provider_op_is_required() {
+        let extensions = capability_ext_with_payload(json!({
+            "schema_version": 1,
+            "offers": [{
+                "offer_id": "o1",
+                "cap_id": "greentic.cap.memory.shortterm",
+                "version": "v1",
+                "provider": { "component_ref": "memory.provider" },
+                "requires_setup": false
+            }]
+        }));
+        let err = validate_capabilities_extension(
+            &Some(extensions),
+            Path::new("."),
+            &["memory.provider".to_string()],
+        )
+        .expect_err("missing provider.op must fail");
+        assert!(
+            err.to_string()
+                .contains("invalid capabilities extension payload"),
             "unexpected error: {err}"
         );
     }
