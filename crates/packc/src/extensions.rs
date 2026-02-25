@@ -39,7 +39,7 @@ pub fn validate_capabilities_extension(
     };
 
     let payload = CapabilitiesExtensionV1::from_extension_value(value)
-        .context("invalid capabilities extension payload")?;
+        .map_err(|err| anyhow::anyhow!("invalid capabilities extension payload: {err}"))?;
     for offer in &payload.offers {
         if offer.offer_id.trim().is_empty() {
             bail!("extensions[{CAPABILITIES_EXTENSION_KEY}] offer_id must not be empty");
