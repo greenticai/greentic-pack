@@ -18,9 +18,12 @@ fn workspace_root() -> PathBuf {
         .join("..")
 }
 
-fn has_host_error_wit_mismatch(output: &str) -> bool {
+fn has_external_guest_wit_mismatch(output: &str) -> bool {
     output.contains("type `host-error` not defined in interface")
         || output.contains("type 'host-error' not defined in interface")
+        || output.contains(
+            "could not find `greentic_component_0_6_0_component_v0_v6_v0` in `bindings`",
+        )
 }
 
 fn write_pack(dir: &Path, wasm_contents: &[u8]) {
@@ -103,7 +106,7 @@ fn build_wasip2_noop_component_v06(target_dir: &Path) -> Result<PathBuf, String>
                     online_stdout,
                     online_stderr
                 );
-                if has_host_error_wit_mismatch(&combined) {
+                if has_external_guest_wit_mismatch(&combined) {
                     return Err(format!(
                         "external greentic-interfaces guest WIT mismatch while building noop fixture (offline+online):\n{}",
                         combined
@@ -120,7 +123,7 @@ fn build_wasip2_noop_component_v06(target_dir: &Path) -> Result<PathBuf, String>
         } else {
             let offline_stdout = String::from_utf8_lossy(&offline_output.stdout);
             let combined = format!("{offline_stdout}\n{offline_stderr}");
-            if has_host_error_wit_mismatch(&combined) {
+            if has_external_guest_wit_mismatch(&combined) {
                 return Err(format!(
                     "external greentic-interfaces guest WIT mismatch while building noop fixture (offline):\n{}",
                     combined
