@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
-version = "0.4.95"
+version = "0.4.96"
 license = "MIT"
 
 [workspace.dependencies]
@@ -41,9 +41,10 @@ pkcs8 = { version = "0.10", features = ["pem"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
-greentic-types = ">=0.4.51, <0.5"
-greentic-flow = ">=0.4.44, <0.5"
-greentic-interfaces-host = ">=0.4.100,<0.5"
+greentic-types = { version = ">=0.4.55, <0.5" }
+greentic-flow = { version = ">=0.4.48, <0.5" }
+greentic-interfaces-host = { version = ">=0.4.106, <0.5" }
+greentic-interfaces-wasmtime = { version = ">=0.4.106, <0.5" }
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
 greentic-config-types = "0.4"
 greentic-config = "0.4"
@@ -57,7 +58,7 @@ rustls-pki-types = "1"
 x509-parser = "0.18"
 regex = "1"
 wit-component = "0.245"
-greentic-distributor-client = { version = "0.4", default-features = false, features = ["reqwest", "dist-client"] }
+greentic-distributor-client = { version = ">=0.4.31, <0.5", default-features = false, features = ["reqwest", "dist-client"] }
 schemars = "1"
 wasmtime = "41"
 wasmtime-wasi = "41"

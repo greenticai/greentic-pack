@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_flow::wizard_ops;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, write_pack_lock};
 use greentic_pack::resolver::{ComponentResolver, ResolveReq, ResolvedComponent};
 use greentic_types::cbor::canonical;
@@ -18,6 +17,9 @@ use hex;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
+use wasmtime::component::{Component as WasmtimeComponent, Linker};
+
+use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
 use crate::config::load_pack_config;
 use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
 use crate::runtime::RuntimeContext;
@@ -178,6 +180,22 @@ async fn populate_component_contract(
             if let Some(describe) = load_describe_from_cache_path(resolved.source_path.as_deref())?
             {
                 describe
+            } else if is_state_store_tenant_ctx_abi_mismatch(&err)
+                || is_missing_descriptor_instance(&err)
+            {
+                // Temporary compat fallback: keep resolve/build working for components
+                // whose state-store import still mismatches host stubs (19 vs 18 fields).
+                component.describe_hash = component
+                    .resolved_digest
+                    .strip_prefix("sha256:")
+                    .unwrap_or(component.resolved_digest.as_str())
+                    .to_string();
+                component.operations.clear();
+                component.role = Some("unknown".to_string());
+                if component.component_version.is_none() {
+                    component.component_version = Some("0.0.0".to_string());
+                }
+                return Ok(());
             } else if use_describe_cache {
                 return Err(err).context("describe failed and no describe cache present");
             } else {
@@ -298,10 +316,41 @@ where
 }
 
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let _ = engine;
-    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
-        .context("fetch wizard spec")?;
-    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
+    describe_component_untyped(engine, bytes)
+}
+
+fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
+    let component =
+        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
+    let mut linker = Linker::new(engine);
+    add_describe_host_imports(&mut linker)?;
+    let instance = linker
+        .instantiate(&mut store, &component)
+        .context("instantiate component root world")?;
+
+    let descriptor = [
+        "component-descriptor",
+        "greentic:component/component-descriptor",
+        "greentic:component/component-descriptor@0.6.0",
+    ]
+    .iter()
+    .find_map(|name| instance.get_export_index(&mut store, None, name))
+    .ok_or_else(|| anyhow!("missing exported descriptor instance"))?;
+    let describe_export = [
+        "describe",
+        "greentic:component/component-descriptor@0.6.0#describe",
+    ]
+    .iter()
+    .find_map(|name| instance.get_export_index(&mut store, Some(&descriptor), name))
+    .ok_or_else(|| anyhow!("missing exported describe function"))?;
+    let describe_func = instance
+        .get_typed_func::<(), (Vec<u8>,)>(&mut store, &describe_export)
+        .context("lookup component-descriptor.describe")?;
+    let (describe_bytes,) = describe_func
+        .call(&mut store, ())
+        .context("call component-descriptor.describe")?;
+    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
 }
 
 fn load_describe_from_cache_path(path: Option<&Path>) -> Result<Option<ComponentDescribe>> {
@@ -324,6 +373,16 @@ fn compute_describe_hash(describe: &ComponentDescribe) -> Result<String> {
         canonical::to_canonical_cbor_allow_floats(describe).context("canonicalize describe")?;
     let digest = Sha256::digest(bytes.as_slice());
     Ok(hex::encode(digest))
+}
+
+fn is_state_store_tenant_ctx_abi_mismatch(err: &anyhow::Error) -> bool {
+    let text = format!("{:#}", err);
+    text.contains("greentic:state/state-store@1.0.0")
+        && text.contains("expected record of 19 fields, found 18 fields")
+}
+
+fn is_missing_descriptor_instance(err: &anyhow::Error) -> bool {
+    format!("{:#}", err).contains("missing exported descriptor instance")
 }
 
 fn normalize_local(

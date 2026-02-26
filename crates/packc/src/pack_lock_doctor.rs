@@ -1,13 +1,12 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::runtime::{NetworkPolicy, RuntimeContext};
 use anyhow::{Context, Result, anyhow, bail};
 use greentic_distributor_client::{DistClient, DistOptions};
-use greentic_flow::wizard_ops;
+use greentic_flow::wizard_ops::{WizardMode, decode_component_qa_spec, fetch_wizard_spec};
 use greentic_pack::PackLoad;
 use greentic_pack::pack_lock::{LockedComponent, PackLockV1, read_pack_lock, validate_pack_lock};
 use greentic_types::cbor::canonical;
@@ -15,13 +14,16 @@ use greentic_types::pack::extensions::component_sources::{
     ArtifactLocationV1, ComponentSourceEntryV1, ComponentSourcesV1,
 };
 use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
-use greentic_types::schemas::component::v0_6_0::qa::ComponentQaSpec;
 use greentic_types::schemas::component::v0_6_0::{ComponentDescribe, schema_hash};
 use greentic_types::validate::{Diagnostic, Severity};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use wasmtime::Engine;
+use wasmtime::component::{Component as WasmtimeComponent, Linker};
+
+use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
+use crate::runtime::{NetworkPolicy, RuntimeContext};
 
 pub struct PackLockDoctorInput<'a> {
     pub load: &'a PackLoad,
@@ -51,6 +53,7 @@ struct WasmSource {
 
 struct DescribeResolution {
     describe: ComponentDescribe,
+    requires_typed_instance: bool,
 }
 
 pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDoctorOutput> {
@@ -344,52 +347,71 @@ pub fn run_pack_lock_doctor(input: PackLockDoctorInput<'_>) -> Result<PackLockDo
             &mut has_errors,
         );
 
-        let qa_modes = [
-            (wizard_ops::WizardMode::Default, "default"),
-            (wizard_ops::WizardMode::Setup, "setup"),
-            (wizard_ops::WizardMode::Update, "update"),
-            (wizard_ops::WizardMode::Remove, "remove"),
-        ];
-        let mut qa_i18n_keys = BTreeSet::new();
-        for (mode, label) in qa_modes {
-            let spec_output = match wizard_ops::fetch_wizard_spec(&wasm.bytes, mode) {
-                Ok(spec_output) => spec_output,
-                Err(err) => {
-                    has_errors = true;
-                    diagnostics.push(component_diag(
-                        component_id,
-                        Severity::Error,
-                        "PACK_LOCK_QA_SPEC_MISSING",
-                        format!("qa_spec() failed for {label}: {err}"),
-                        Some(format!("components/{component_id}/qa/{label}")),
-                        Some("ensure the component exports component-qa for all modes".to_string()),
-                        Value::Null,
-                    ));
-                    continue;
-                }
-            };
-            let spec: ComponentQaSpec = match wizard_ops::decode_component_qa_spec(
-                spec_output.qa_spec_cbor.as_slice(),
-                mode,
-            ) {
+        if let Err(err) = WasmtimeComponent::from_binary(&engine, &wasm.bytes) {
+            has_errors = true;
+            diagnostics.push(component_diag(
+                component_id,
+                Severity::Error,
+                "PACK_LOCK_COMPONENT_DECODE_FAILED",
+                format!("component bytes are not a valid component: {err}"),
+                Some(format!("components/{component_id}")),
+                Some("rebuild the pack with a valid component artifact".to_string()),
+                Value::Null,
+            ));
+            continue;
+        }
+
+        if !describe_resolution.requires_typed_instance {
+            diagnostics.push(component_diag(
+                component_id,
+                Severity::Warn,
+                "PACK_LOCK_COMPONENT_WORLD_FALLBACK",
+                "describe was resolved via fallback; qa/i18n contract checks were skipped"
+                    .to_string(),
+                Some(format!("components/{component_id}")),
+                None,
+                Value::Null,
+            ));
+        }
+
+        for (mode, label) in [
+            (WizardMode::Default, "default"),
+            (WizardMode::Setup, "setup"),
+            (WizardMode::Update, "update"),
+            (WizardMode::Remove, "remove"),
+        ] {
+            let spec = match fetch_wizard_spec(&wasm.bytes, mode) {
                 Ok(spec) => spec,
                 Err(err) => {
                     has_errors = true;
                     diagnostics.push(component_diag(
                         component_id,
                         Severity::Error,
-                        "PACK_LOCK_QA_SPEC_DECODE_FAILED",
-                        format!("qa_spec() decode failed for {label}: {err}"),
+                        "PACK_LOCK_QA_SPEC_MISSING",
+                        format!("wizard qa_spec fetch failed for {label}: {err}"),
                         Some(format!("components/{component_id}/qa/{label}")),
-                        Some("ensure qa_spec returns a canonical ComponentQaSpec".to_string()),
+                        Some(
+                            "ensure setup contract and setup.apply_answers are exported"
+                                .to_string(),
+                        ),
                         Value::Null,
                     ));
                     continue;
                 }
             };
-            qa_i18n_keys.extend(spec.i18n_keys());
+            if let Err(err) = decode_component_qa_spec(&spec.qa_spec_cbor, mode) {
+                has_errors = true;
+                diagnostics.push(component_diag(
+                    component_id,
+                    Severity::Error,
+                    "PACK_LOCK_QA_SPEC_DECODE_FAILED",
+                    format!("qa_spec decode failed for {label}: {err}"),
+                    Some(format!("components/{component_id}/qa/{label}")),
+                    Some("ensure qa_spec is valid canonical CBOR/legacy JSON".to_string()),
+                    Value::Null,
+                ));
+            }
         }
-        let _ = qa_i18n_keys;
     }
 
     Ok(finish_diagnostics(diagnostics))
@@ -591,19 +613,28 @@ fn describe_component_with_cache(
     component_id: &str,
 ) -> Result<DescribeResolution> {
     match describe_component(engine, &wasm.bytes) {
-        Ok(describe) => Ok(DescribeResolution { describe }),
+        Ok(describe) => Ok(DescribeResolution {
+            describe,
+            requires_typed_instance: true,
+        }),
         Err(err) => {
             if should_fallback_to_untyped_describe(&err)
                 && let Ok(describe) = describe_component_untyped(engine, &wasm.bytes)
             {
-                return Ok(DescribeResolution { describe });
+                return Ok(DescribeResolution {
+                    describe,
+                    requires_typed_instance: false,
+                });
             }
             if use_cache || should_fallback_to_describe_cache(&err) {
                 if let Some(describe) = load_describe_from_cache(
                     wasm.describe_bytes.as_deref(),
                     wasm.source_path.as_deref(),
                 )? {
-                    return Ok(DescribeResolution { describe });
+                    return Ok(DescribeResolution {
+                        describe,
+                        requires_typed_instance: false,
+                    });
                 }
                 bail!("describe failed and no describe cache found for {component_id}: {err}");
             }
@@ -613,25 +644,49 @@ fn describe_component_with_cache(
 }
 
 fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let _ = engine;
-    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
-        .context("fetch wizard spec")?;
-    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
+    let component =
+        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
+    let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
+    let mut linker = Linker::new(engine);
+    add_describe_host_imports(&mut linker)?;
+    let instance = linker
+        .instantiate(&mut store, &component)
+        .context("instantiate component root world")?;
+
+    let descriptor = [
+        "component-descriptor",
+        "greentic:component/component-descriptor",
+        "greentic:component/component-descriptor@0.6.0",
+    ]
+    .iter()
+    .find_map(|name| instance.get_export_index(&mut store, None, name))
+    .ok_or_else(|| anyhow!("missing exported descriptor instance"))?;
+    let describe_export = [
+        "describe",
+        "greentic:component/component-descriptor@0.6.0#describe",
+    ]
+    .iter()
+    .find_map(|name| instance.get_export_index(&mut store, Some(&descriptor), name))
+    .ok_or_else(|| anyhow!("missing exported describe function"))?;
+    let describe_func = instance
+        .get_typed_func::<(), (Vec<u8>,)>(&mut store, &describe_export)
+        .context("lookup component-descriptor.describe")?;
+    let (describe_bytes,) = describe_func
+        .call(&mut store, ())
+        .context("call component-descriptor.describe")?;
+    canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
 }
 
 fn should_fallback_to_describe_cache(err: &anyhow::Error) -> bool {
-    err.to_string().contains("fetch wizard spec")
+    err.to_string().contains("instantiate component-v0-v6-v0")
 }
 
 fn should_fallback_to_untyped_describe(err: &anyhow::Error) -> bool {
-    err.to_string().contains("fetch wizard spec")
+    err.to_string().contains("instantiate component-v0-v6-v0")
 }
 
 fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let _ = engine;
-    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
-        .context("fetch wizard spec")?;
-    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
+    describe_component_untyped(engine, bytes)
 }
 
 fn load_describe_from_cache(

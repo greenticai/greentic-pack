@@ -246,6 +246,44 @@ greentic-pack add-extension provider --pack-dir examples/weather-demo \
   --id messaging.dummy --kind messaging --title "Dummy Messaging Provider"
 ```
 
+### `add-extension capability`
+
+Add or amend a capability offer in `extensions.greentic.ext.capabilities.v1`.
+
+```
+greentic-pack add-extension capability [options]
+```
+
+Options:
+- `--pack-dir <DIR>`: update a source directory containing `pack.yaml`.
+- `--dry-run`: show the updated `pack.yaml` without persisting changes.
+- `--offer-id <ID>`: stable capability offer id.
+- `--cap-id <CAP_ID>`: capability identifier (for example `greentic.cap.op_hook.pre`).
+- `--version <VERSION>`: capability contract version (default `v1`).
+- `--component-ref <COMPONENT_ID>`: provider component id from `components[].id`.
+- `--op <OP_ID>`: provider operation to invoke.
+- `--priority <INT>`: deterministic selection priority (ascending).
+- `--requires-setup`: mark offer as requiring setup.
+- `--qa-ref <PACK_REL_PATH>`: required with `--requires-setup`; must exist in pack sources.
+- `--hook-op-name <OP_NAME>`: repeatable exact operation names for hook applicability.
+
+Validation notes (`build`/`lint`):
+- `requires_setup=true` requires a non-empty `setup.qa_ref`.
+- `setup.qa_ref` must point to an existing file in the pack source.
+- `provider.component_ref` must reference an existing component id from `pack.yaml`.
+
+Example:
+
+```
+greentic-pack add-extension capability --pack-dir examples/weather-demo \
+  --offer-id policy.pre.10 \
+  --cap-id greentic.cap.op_hook.pre \
+  --component-ref policy.hook \
+  --op hook.evaluate \
+  --priority 10 \
+  --hook-op-name send
+```
+
 ### `sign`
 
 Sign a manifest with an Ed25519 private key.

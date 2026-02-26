@@ -5,18 +5,22 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::config::PackConfig;
-use crate::runtime::{NetworkPolicy, RuntimeContext};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, ValueEnum};
 use greentic_distributor_client::{DistClient, DistOptions};
 use greentic_flow::schema_validate::{Severity, validate_value_against_schema};
-use greentic_flow::wizard_ops;
+use greentic_flow::wizard_ops::{
+    WizardAbi, WizardMode as FlowWizardMode, apply_wizard_answers, decode_component_qa_spec,
+    fetch_wizard_spec,
+};
+use greentic_interfaces_host::component_v0_6::exports::greentic::component::node::{
+    ComponentDescriptor, SchemaSource,
+};
 use greentic_pack::pack_lock::read_pack_lock;
 use greentic_types::cbor::canonical;
 use greentic_types::i18n_text::I18nText;
 use greentic_types::qa::QaSpecSource;
-use greentic_types::schemas::component::v0_6_0::ComponentDescribe;
+use greentic_types::schemas::common::schema_ir::SchemaIr;
 use greentic_types::schemas::component::v0_6_0::qa::{
     ComponentQaSpec, QaMode as SpecQaMode, Question, QuestionKind,
 };
@@ -28,7 +32,9 @@ use hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
-use wasmtime::Engine;
+
+use crate::config::PackConfig;
+use crate::runtime::{NetworkPolicy, RuntimeContext};
 
 #[derive(Debug, Args)]
 pub struct QaArgs {
@@ -89,12 +95,12 @@ impl QaModeLabel {
         }
     }
 
-    fn to_wizard_mode(self) -> wizard_ops::WizardMode {
+    fn to_flow_mode(self) -> FlowWizardMode {
         match self {
-            QaModeLabel::Default => wizard_ops::WizardMode::Default,
-            QaModeLabel::Setup => wizard_ops::WizardMode::Setup,
-            QaModeLabel::Update | QaModeLabel::Upgrade => wizard_ops::WizardMode::Update,
-            QaModeLabel::Remove => wizard_ops::WizardMode::Remove,
+            QaModeLabel::Default => FlowWizardMode::Default,
+            QaModeLabel::Setup => FlowWizardMode::Setup,
+            QaModeLabel::Update | QaModeLabel::Upgrade => FlowWizardMode::Update,
+            QaModeLabel::Remove => FlowWizardMode::Remove,
         }
     }
 
@@ -115,13 +121,6 @@ impl QaModeLabel {
             QaModeLabel::Remove => PackQaMode::Remove,
         }
     }
-}
-
-#[derive(Debug, Serialize)]
-struct ValidationViolation<'a> {
-    code: &'a str,
-    path: &'a str,
-    message: &'a str,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -177,7 +176,6 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
 
     let i18n_bundle = load_i18n_bundle(&pack_dir, &args.locale)?;
     let pack_qa_spec = load_pack_qa_spec(&pack_dir, args.mode.to_pack_mode(), args.pack_only)?;
-    let engine = Engine::default();
     let dist = DistClient::new(DistOptions {
         cache_dir: runtime.cache_dir(),
         allow_tags: true,
@@ -236,7 +234,7 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
         let resolved =
             resolve_component_bytes(&dist, runtime, &reference, Some(&locked.resolved_digest))?;
 
-        let spec = load_component_qa_spec(&engine, &resolved.bytes, args.mode.to_wizard_mode())
+        let spec = load_component_qa_spec(&resolved.bytes, args.mode.to_flow_mode())
             .with_context(|| format!("load QA spec for {}", component_id))?;
 
         if spec.mode != args.mode.to_spec_mode() {
@@ -259,8 +257,6 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
         )?;
         answers.components.insert(component_id.clone(), updated);
 
-        let describe = load_component_describe(&engine, &resolved.bytes)
-            .with_context(|| format!("load describe for {}", component_id))?;
         let component_answers = answers
             .components
             .get(&component_id)
@@ -271,14 +267,19 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
         let current_config = canonical::to_canonical_cbor_allow_floats(&serde_json::json!({}))
             .context("encode empty config cbor")?;
         let config_cbor = apply_component_answers(
-            &engine,
             &resolved.bytes,
-            args.mode.to_wizard_mode(),
+            args.mode.to_flow_mode(),
             &current_config,
             &answers_cbor,
         )
         .with_context(|| format!("apply-answers for {}", component_id))?;
-        validate_component_config_output(&component_id, &describe, &config_cbor)?;
+        let wizard_spec = fetch_wizard_spec(&resolved.bytes, args.mode.to_flow_mode())
+            .with_context(|| format!("load setup descriptor for {}", component_id))?;
+        validate_component_config_output(
+            &component_id,
+            wizard_spec.descriptor.as_ref(),
+            &config_cbor,
+        )?;
     }
 
     write_answers(&answers_json_path, &answers_cbor_path, &answers)?;
@@ -956,42 +957,43 @@ where
     tokio::task::block_in_place(|| handle.block_on(fut))
 }
 
-fn load_component_qa_spec(
-    _engine: &Engine,
-    bytes: &[u8],
-    mode: wizard_ops::WizardMode,
-) -> Result<ComponentQaSpec> {
-    let spec = wizard_ops::fetch_wizard_spec(bytes, mode).context("fetch wizard spec")?;
-    wizard_ops::decode_component_qa_spec(spec.qa_spec_cbor.as_slice(), mode)
-        .context("decode ComponentQaSpec")
-}
-
-fn load_component_describe(_engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let spec = wizard_ops::fetch_wizard_spec(bytes, wizard_ops::WizardMode::Default)
-        .context("fetch wizard spec")?;
-    canonical::from_cbor(spec.describe_cbor.as_slice()).context("decode ComponentDescribe")
+fn load_component_qa_spec(bytes: &[u8], mode: FlowWizardMode) -> Result<ComponentQaSpec> {
+    let spec = fetch_wizard_spec(bytes, mode).context("fetch wizard spec from component")?;
+    decode_component_qa_spec(&spec.qa_spec_cbor, mode).context("decode wizard qa-spec")
 }
 
 fn apply_component_answers(
-    _engine: &Engine,
     bytes: &[u8],
-    mode: wizard_ops::WizardMode,
+    mode: FlowWizardMode,
     current_config: &[u8],
     answers: &[u8],
 ) -> Result<Vec<u8>> {
-    let spec = wizard_ops::fetch_wizard_spec(bytes, mode).context("fetch wizard spec")?;
-    wizard_ops::apply_wizard_answers(bytes, spec.abi, mode, current_config, answers)
-        .context("call apply_answers")
+    apply_wizard_answers(bytes, WizardAbi::V6, mode, current_config, answers)
+        .context("invoke setup.apply_answers")
 }
 
 fn validate_component_config_output(
     component_id: &str,
-    describe: &ComponentDescribe,
+    descriptor: Option<&ComponentDescriptor>,
     config_cbor: &[u8],
 ) -> Result<()> {
+    canonical::ensure_canonical(config_cbor)
+        .context("apply-answers output must be canonical CBOR")?;
+
     let value: ciborium::value::Value =
         ciborium::de::from_reader(config_cbor).context("decode apply-answers output as CBOR")?;
-    let diags = validate_value_against_schema(&describe.config_schema, &value);
+
+    let schema = match descriptor {
+        Some(descriptor) => setup_apply_answers_output_schema(descriptor).with_context(|| {
+            format!("decode setup.apply_answers output schema for {component_id}")
+        })?,
+        None => None,
+    };
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+
+    let diags = validate_value_against_schema(&schema, &value);
     let errors: Vec<_> = diags
         .iter()
         .filter(|diag| diag.severity == Severity::Error)
@@ -1000,27 +1002,35 @@ fn validate_component_config_output(
         return Ok(());
     }
 
-    let violations: Vec<_> = errors
-        .iter()
-        .map(|diag| ValidationViolation {
-            code: diag.code,
-            path: diag.path.as_str(),
-            message: diag.message.as_str(),
-        })
-        .collect();
-    let structured = serde_json::to_string_pretty(&violations).unwrap_or_else(|_| "[]".to_string());
     let summary = errors
         .iter()
         .map(|diag| format!("{}: {}", diag.path, diag.message))
         .collect::<Vec<_>>()
         .join("; ");
     bail!(
-        "component {} apply-answers output failed strict schema validation ({} violations): {}\nviolations_json={}",
+        "component {} apply-answers output failed schema validation ({} violations): {}",
         component_id,
         errors.len(),
-        summary,
-        structured
+        summary
     );
+}
+
+fn setup_apply_answers_output_schema(descriptor: &ComponentDescriptor) -> Result<Option<SchemaIr>> {
+    let Some(op) = descriptor
+        .ops
+        .iter()
+        .find(|op| op.name == "setup.apply_answers")
+    else {
+        return Ok(None);
+    };
+    match &op.output.schema {
+        SchemaSource::InlineCbor(bytes) => {
+            let schema: SchemaIr =
+                canonical::from_cbor(bytes).context("decode inline output schema")?;
+            Ok(Some(schema))
+        }
+        _ => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -1028,10 +1038,12 @@ mod tests {
     use super::*;
     use crate::config::{ComponentConfig, FlowKindLabel};
     use clap::ValueEnum;
+    use greentic_interfaces_host::component_v0_6::exports::greentic::component::node::{
+        ComponentDescriptor, IoSchema, Op, SchemaSource,
+    };
     use greentic_pack::pack_lock::PackLockV1;
     use greentic_types::cbor_bytes::CborBytes;
     use greentic_types::schemas::common::schema_ir::{AdditionalProperties, SchemaIr};
-    use greentic_types::schemas::component::v0_6_0::ComponentInfo;
     use greentic_types::{ComponentCapabilities, ComponentProfiles};
     use tempfile::TempDir;
 
@@ -1208,32 +1220,45 @@ mod tests {
 
     #[test]
     fn validation_error_includes_paths_and_structured_violations() {
-        let describe = ComponentDescribe {
-            info: ComponentInfo {
-                id: "demo.component".to_string(),
-                version: "0.1.0".to_string(),
-                role: "tool".to_string(),
-                display_name: None,
-            },
-            provided_capabilities: Vec::new(),
-            required_capabilities: Vec::new(),
-            metadata: BTreeMap::new(),
-            operations: Vec::new(),
-            config_schema: SchemaIr::Object {
-                properties: BTreeMap::from([("enabled".to_string(), SchemaIr::Bool)]),
-                required: vec!["enabled".to_string()],
-                additional: AdditionalProperties::Forbid,
-            },
+        let output_schema = SchemaIr::Object {
+            properties: BTreeMap::from([("enabled".to_string(), SchemaIr::Bool)]),
+            required: vec!["enabled".to_string()],
+            additional: AdditionalProperties::Forbid,
+        };
+        let output_schema_cbor =
+            canonical::to_canonical_cbor_allow_floats(&output_schema).expect("schema cbor");
+        let describe = ComponentDescriptor {
+            name: "demo.component".to_string(),
+            version: "0.1.0".to_string(),
+            summary: None,
+            capabilities: Vec::new(),
+            ops: vec![Op {
+                name: "setup.apply_answers".to_string(),
+                summary: None,
+                input: IoSchema {
+                    schema: SchemaSource::InlineCbor(vec![0xa0]),
+                    content_type: "application/cbor".to_string(),
+                    schema_version: None,
+                },
+                output: IoSchema {
+                    schema: SchemaSource::InlineCbor(output_schema_cbor),
+                    content_type: "application/cbor".to_string(),
+                    schema_version: None,
+                },
+                examples: Vec::new(),
+            }],
+            schemas: Vec::new(),
+            setup: None,
         };
         let config_cbor = canonical::to_canonical_cbor_allow_floats(&serde_json::json!({}))
             .expect("encode config");
-        let err = validate_component_config_output("demo.component", &describe, &config_cbor)
+        let err = validate_component_config_output("demo.component", Some(&describe), &config_cbor)
             .expect_err("missing required field must fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("$.enabled"), "missing path in: {msg}");
         assert!(
-            msg.contains("violations_json"),
-            "missing structured payload in: {msg}"
+            msg.contains("schema validation"),
+            "missing validation text in: {msg}"
         );
     }
 }

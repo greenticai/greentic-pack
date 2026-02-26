@@ -26,6 +26,7 @@ ed25519-dalek = { workspace = true }
 greentic-flow = { workspace = true }
 greentic-types = { workspace = true }
 greentic-interfaces-host = { workspace = true }
+greentic-interfaces-wasmtime = { workspace = true }
 greentic-telemetry = { workspace = true }
 hex = { workspace = true }
 ignore = { workspace = true }

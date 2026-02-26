@@ -1,15 +1,100 @@
 use anyhow::{Context, Result, bail};
+use greentic_types::pack::extensions::capabilities::CapabilitiesExtensionV1;
 use greentic_types::pack_manifest::{ExtensionInline, ExtensionRef};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 pub const COMPONENTS_EXTENSION_KEY: &str = "greentic.components";
+pub const CAPABILITIES_EXTENSION_KEY: &str = "greentic.ext.capabilities.v1";
 
 #[derive(Debug, Clone)]
 pub struct ComponentsExtension {
     pub refs: Vec<String>,
     pub mode: Option<String>,
     pub allow_tags: Option<bool>,
+}
+
+pub fn validate_capabilities_extension(
+    extensions: &Option<BTreeMap<String, ExtensionRef>>,
+    pack_root: &Path,
+    known_component_ids: &[String],
+) -> Result<Option<CapabilitiesExtensionV1>> {
+    let Some(ext) = extensions
+        .as_ref()
+        .and_then(|all| all.get(CAPABILITIES_EXTENSION_KEY))
+    else {
+        return Ok(None);
+    };
+
+    let inline = ext.inline.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("extensions[{CAPABILITIES_EXTENSION_KEY}] inline is required")
+    })?;
+
+    let value = match inline {
+        ExtensionInline::Other(value) => value,
+        _ => {
+            bail!("extensions[{CAPABILITIES_EXTENSION_KEY}] inline must be an object");
+        }
+    };
+
+    let payload = CapabilitiesExtensionV1::from_extension_value(value)
+        .map_err(|err| anyhow::anyhow!("invalid capabilities extension payload: {err}"))?;
+    for offer in &payload.offers {
+        if offer.offer_id.trim().is_empty() {
+            bail!("extensions[{CAPABILITIES_EXTENSION_KEY}] offer_id must not be empty");
+        }
+        if offer.cap_id.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` cap_id must not be empty",
+                offer.offer_id
+            );
+        }
+        if offer.version.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` version must not be empty",
+                offer.offer_id
+            );
+        }
+        if offer.provider.component_ref.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` provider.component_ref must not be empty",
+                offer.offer_id
+            );
+        }
+        if offer.provider.op.trim().is_empty() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` provider.op must not be empty",
+                offer.offer_id
+            );
+        }
+        if !known_component_ids.contains(&offer.provider.component_ref) {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` references unknown provider.component_ref `{}`",
+                offer.offer_id,
+                offer.provider.component_ref
+            );
+        }
+        if !offer.requires_setup {
+            continue;
+        }
+        let Some(setup) = offer.setup.as_ref() else {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` requires setup but setup is missing",
+                offer.offer_id
+            );
+        };
+        let qa_path = pack_root.join(&setup.qa_ref);
+        if !qa_path.exists() {
+            bail!(
+                "extensions[{CAPABILITIES_EXTENSION_KEY}] offer `{}` references missing qa_ref {}",
+                offer.offer_id,
+                setup.qa_ref
+            );
+        }
+    }
+
+    Ok(Some(payload))
 }
 
 pub fn validate_components_extension(
@@ -135,6 +220,7 @@ fn validate_oci_ref(reference: &str, allow_tags: bool) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
 
     fn ext_with_payload(payload: JsonValue) -> BTreeMap<String, ExtensionRef> {
         let mut map = BTreeMap::new();
@@ -185,5 +271,91 @@ mod tests {
             "refs": ["not-an-oci-ref"]
         }));
         assert!(validate_components_extension(&Some(extensions), true).is_err());
+    }
+
+    fn capability_ext_with_payload(payload: JsonValue) -> BTreeMap<String, ExtensionRef> {
+        let mut map = BTreeMap::new();
+        map.insert(
+            CAPABILITIES_EXTENSION_KEY.to_string(),
+            ExtensionRef {
+                kind: CAPABILITIES_EXTENSION_KEY.to_string(),
+                version: "v1".to_string(),
+                digest: None,
+                location: None,
+                inline: Some(ExtensionInline::Other(payload)),
+            },
+        );
+        map
+    }
+
+    #[test]
+    fn capabilities_requires_setup_must_include_setup_block() {
+        let extensions = capability_ext_with_payload(json!({
+            "schema_version": 1,
+            "offers": [{
+                "offer_id": "o1",
+                "cap_id": "greentic.cap.memory.shortterm",
+                "version": "v1",
+                "provider": { "component_ref": "memory.provider", "op": "cap.invoke" },
+                "requires_setup": true
+            }]
+        }));
+        let err = validate_capabilities_extension(
+            &Some(extensions),
+            Path::new("."),
+            &["memory.provider".to_string()],
+        )
+        .expect_err("missing setup should fail");
+        assert!(
+            err.to_string()
+                .contains("requires setup but setup is missing"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn capabilities_provider_component_must_exist() {
+        let extensions = capability_ext_with_payload(json!({
+            "schema_version": 1,
+            "offers": [{
+                "offer_id": "o1",
+                "cap_id": "greentic.cap.memory.shortterm",
+                "version": "v1",
+                "provider": { "component_ref": "missing.component", "op": "cap.invoke" },
+                "requires_setup": false
+            }]
+        }));
+        let err = validate_capabilities_extension(&Some(extensions), Path::new("."), &[])
+            .expect_err("unknown provider component must fail");
+        assert!(
+            err.to_string()
+                .contains("references unknown provider.component_ref"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn capabilities_provider_op_is_required() {
+        let extensions = capability_ext_with_payload(json!({
+            "schema_version": 1,
+            "offers": [{
+                "offer_id": "o1",
+                "cap_id": "greentic.cap.memory.shortterm",
+                "version": "v1",
+                "provider": { "component_ref": "memory.provider" },
+                "requires_setup": false
+            }]
+        }));
+        let err = validate_capabilities_extension(
+            &Some(extensions),
+            Path::new("."),
+            &["memory.provider".to_string()],
+        )
+        .expect_err("missing provider.op must fail");
+        assert!(
+            err.to_string()
+                .contains("invalid capabilities extension payload"),
+            "unexpected error: {err}"
+        );
     }
 }

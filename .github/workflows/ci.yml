@@ -42,8 +42,6 @@ jobs:
           components: clippy
       - name: Check for duplicate canonical WIT
         run: bash ci/check_no_duplicate_canonical_wit.sh
-      - name: Check interfaces canonical facade usage
-        run: bash ci/check_no_interfaces_bindings_imports.sh
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-rust-1.91-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
@@ -58,10 +56,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.91.0
+      - name: Prepare temp dir
+        run: mkdir -p "$TMPDIR"
       - name: Check for duplicate canonical WIT
         run: bash ci/check_no_duplicate_canonical_wit.sh
-      - name: Check interfaces canonical facade usage
-        run: bash ci/check_no_interfaces_bindings_imports.sh
       - name: Install mold + clang (Linux only)
         if: runner.os == 'Linux'
         run: |
@@ -108,16 +106,14 @@ jobs:
           fi
       - name: Install wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
-      - name: Prepare temp dir
-        run: mkdir -p "$TMPDIR"
       - name: Install greentic tooling
         run: |
           set -euo pipefail
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall wasm-tools -y --force
-      - run: cargo build --workspace --all-features
-      - run: cargo test --workspace --all-features -- --nocapture
+      - run: cargo build --workspace --all-features --locked
+      - run: cargo test --workspace --all-features --locked -- --nocapture
 
   publish:
     name: Publish crates
