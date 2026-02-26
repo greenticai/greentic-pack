@@ -52,11 +52,16 @@ fn online() -> bool {
     }
 }
 
-fn has_host_error_wit_mismatch(stdout: &str, stderr: &str) -> bool {
-    stdout.contains("type `host-error` not defined in interface")
-        || stdout.contains("type 'host-error' not defined in interface")
-        || stderr.contains("type `host-error` not defined in interface")
-        || stderr.contains("type 'host-error' not defined in interface")
+fn has_external_guest_wit_mismatch(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}");
+    combined.contains("type `host-error` not defined in interface")
+        || combined.contains("type 'host-error' not defined in interface")
+        || combined
+            .contains("could not find `greentic_component_0_6_0_component_v0_v6_v0` in `bindings`")
+        || combined.contains("greentic-interfaces-guest")
+            && (combined.contains("failed to resolve")
+                || combined.contains("could not find")
+                || combined.contains("in `bindings`"))
 }
 
 fn link_shared_component(wasm_src: &Path, pack_dir: &Path) -> PathBuf {
@@ -328,7 +333,7 @@ fn multi_pack_shared_component_has_operation_binding() {
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if has_host_error_wit_mismatch(&stdout, &stderr) {
+        if has_external_guest_wit_mismatch(&stdout, &stderr) {
             eprintln!(
                 "skipping multi_pack_shared_component_has_operation_binding: external greentic-interfaces guest WIT mismatch during scaffold\nstdout={}\nstderr={}",
                 stdout, stderr
@@ -349,7 +354,7 @@ fn multi_pack_shared_component_has_operation_binding() {
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if has_host_error_wit_mismatch(&stdout, &stderr) {
+        if has_external_guest_wit_mismatch(&stdout, &stderr) {
             eprintln!(
                 "skipping multi_pack_shared_component_has_operation_binding: external greentic-interfaces guest WIT mismatch during build\nstdout={}\nstderr={}",
                 stdout, stderr

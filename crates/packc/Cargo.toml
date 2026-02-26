@@ -43,7 +43,7 @@ toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
-rand_core_06 = { workspace = true }
+getrandom = { workspace = true }
 greentic-pack = { workspace = true }
 greentic-config = { workspace = true }
 greentic-config-types = { workspace = true }
@@ -59,6 +59,8 @@ wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 indexmap = { workspace = true }
 ciborium = { workspace = true }
+sys-locale = { workspace = true }
+unic-langid = { workspace = true }
 
 [lib]
 name = "packc"

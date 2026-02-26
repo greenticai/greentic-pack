@@ -29,12 +29,15 @@ pub async fn handle(args: NewArgs, json: bool, _runtime: &RuntimeContext) -> Res
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": "ok",
+                "status": crate::cli_i18n::t("cli.status.ok"),
                 "pack_dir": root,
             }))?
         );
     } else {
-        println!("created pack at {}", root.display());
+        println!(
+            "{}",
+            crate::cli_i18n::tf("cli.new.created_pack_at", &[&root.display().to_string()])
+        );
     }
 
     Ok(())

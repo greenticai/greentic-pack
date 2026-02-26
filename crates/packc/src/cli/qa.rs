@@ -145,9 +145,7 @@ impl AnswersDoc {
 
 pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
     if matches!(args.mode, QaModeLabel::Upgrade) {
-        eprintln!(
-            "warning: --mode upgrade is deprecated; use --mode update (alias retained for compatibility)"
-        );
+        eprintln!("{}", crate::cli_i18n::t("cli.qa.warn.upgrade_deprecated"));
     }
     let pack_dir = args
         .pack_dir
@@ -155,7 +153,10 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
         .with_context(|| format!("failed to resolve pack dir {}", args.pack_dir.display()))?;
     let pack_yaml = pack_dir.join("pack.yaml");
     if args.pack_only && (args.all_locked || !args.components.is_empty()) {
-        bail!("--pack-only cannot be combined with --component or --all-locked");
+        bail!(
+            "{}",
+            crate::cli_i18n::t("cli.qa.error.pack_only_combination")
+        );
     }
 
     let config = read_pack_config(&pack_yaml)?;
@@ -283,8 +284,20 @@ pub fn handle(args: QaArgs, runtime: &RuntimeContext) -> Result<()> {
     }
 
     write_answers(&answers_json_path, &answers_cbor_path, &answers)?;
-    eprintln!("wrote {}", answers_json_path.display());
-    eprintln!("wrote {}", answers_cbor_path.display());
+    eprintln!(
+        "{}",
+        crate::cli_i18n::tf(
+            "cli.common.wrote_path",
+            &[&answers_json_path.display().to_string()]
+        )
+    );
+    eprintln!(
+        "{}",
+        crate::cli_i18n::tf(
+            "cli.common.wrote_path",
+            &[&answers_cbor_path.display().to_string()]
+        )
+    );
 
     Ok(())
 }
@@ -305,7 +318,7 @@ fn load_pack_qa_spec(
     let pack_cbor = pack_dir.join("pack.cbor");
     if !pack_cbor.exists() {
         if require {
-            bail!("pack.cbor not found (pack-level QA requires pack.cbor with metadata)");
+            bail!("{}", crate::cli_i18n::t("cli.qa.error.pack_cbor_required"));
         }
         return Ok(None);
     }
@@ -669,7 +682,7 @@ fn prompt_question(
                 return Ok(Some(default.clone()));
             }
             if question.required {
-                println!("Answer required.");
+                println!("{}", crate::cli_i18n::t("cli.qa.prompt.answer_required"));
                 continue;
             }
             return Ok(None);
@@ -683,21 +696,21 @@ fn prompt_question(
                         .ok_or_else(|| anyhow!("invalid numeric input"))?,
                 ),
                 Err(_) => {
-                    println!("Expected a number.");
+                    println!("{}", crate::cli_i18n::t("cli.qa.prompt.expected_number"));
                     continue;
                 }
             },
             QuestionKind::Bool => match parse_bool(input) {
                 Some(value) => serde_json::Value::Bool(value),
                 None => {
-                    println!("Expected yes/no.");
+                    println!("{}", crate::cli_i18n::t("cli.qa.prompt.expected_yes_no"));
                     continue;
                 }
             },
             QuestionKind::Choice { options } => match parse_choice(input, options, i18n_bundle) {
                 Some(value) => serde_json::Value::String(value),
                 None => {
-                    println!("Select one of the listed options.");
+                    println!("{}", crate::cli_i18n::t("cli.qa.prompt.select_option"));
                     continue;
                 }
             },
@@ -729,7 +742,7 @@ fn prompt_pack_question(
                 return Ok(Some(default.clone()));
             }
             if question.required {
-                println!("Answer required.");
+                println!("{}", crate::cli_i18n::t("cli.qa.prompt.answer_required"));
                 continue;
             }
             return Ok(None);
@@ -743,14 +756,14 @@ fn prompt_pack_question(
                         .ok_or_else(|| anyhow!("invalid numeric input"))?,
                 ),
                 Err(_) => {
-                    println!("Expected a number.");
+                    println!("{}", crate::cli_i18n::t("cli.qa.prompt.expected_number"));
                     continue;
                 }
             },
             PackQuestionKind::Bool => match parse_bool(input) {
                 Some(value) => serde_json::Value::Bool(value),
                 None => {
-                    println!("Expected yes/no.");
+                    println!("{}", crate::cli_i18n::t("cli.qa.prompt.expected_yes_no"));
                     continue;
                 }
             },
@@ -758,7 +771,7 @@ fn prompt_pack_question(
                 match parse_pack_choice(input, options, i18n_bundle) {
                     Some(value) => serde_json::Value::String(value),
                     None => {
-                        println!("Select one of the listed options.");
+                        println!("{}", crate::cli_i18n::t("cli.qa.prompt.select_option"));
                         continue;
                     }
                 }

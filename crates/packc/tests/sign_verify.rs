@@ -146,7 +146,9 @@ fn sign_and_verify_manifest() {
     build.assert().success();
 
     // Generate keypair
-    let signing_key = SigningKey::generate(&mut rand_core_06::OsRng);
+    let mut secret = [0u8; 32];
+    getrandom::fill(&mut secret).expect("generate random signing key bytes");
+    let signing_key = SigningKey::from_bytes(&secret);
     let priv_pem = signing_key
         .to_pkcs8_pem(pkcs8::LineEnding::LF)
         .expect("priv pem");

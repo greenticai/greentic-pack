@@ -23,6 +23,10 @@ fn has_external_guest_wit_mismatch(output: &str) -> bool {
         || output.contains("type 'host-error' not defined in interface")
         || output
             .contains("could not find `greentic_component_0_6_0_component_v0_v6_v0` in `bindings`")
+        || (output.contains("greentic-interfaces-guest")
+            && (output.contains("failed to resolve")
+                || output.contains("could not find")
+                || output.contains("in `bindings`")))
 }
 
 fn write_pack(dir: &Path, wasm_contents: &[u8]) {

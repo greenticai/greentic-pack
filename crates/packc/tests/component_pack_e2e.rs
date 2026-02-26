@@ -40,6 +40,18 @@ fn online() -> bool {
     }
 }
 
+fn has_external_guest_wit_mismatch(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}");
+    combined.contains("type `host-error` not defined in interface")
+        || combined.contains("type 'host-error' not defined in interface")
+        || combined
+            .contains("could not find `greentic_component_0_6_0_component_v0_v6_v0` in `bindings`")
+        || combined.contains("greentic-interfaces-guest")
+            && (combined.contains("failed to resolve")
+                || combined.contains("could not find")
+                || combined.contains("in `bindings`"))
+}
+
 #[test]
 fn end_to_end_component_pack_workflow() {
     if !tool_available("greentic-component") {
@@ -89,11 +101,7 @@ fn end_to_end_component_pack_workflow() {
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let host_error_wit_mismatch = stdout.contains("type `host-error` not defined in interface")
-            || stdout.contains("type 'host-error' not defined in interface")
-            || stderr.contains("type `host-error` not defined in interface")
-            || stderr.contains("type 'host-error' not defined in interface");
-        if host_error_wit_mismatch {
+        if has_external_guest_wit_mismatch(&stdout, &stderr) {
             eprintln!(
                 "skipping end_to_end_component_pack_workflow: external greentic-interfaces guest WIT mismatch during scaffold\nstdout={}\nstderr={}",
                 stdout, stderr
@@ -123,11 +131,7 @@ fn end_to_end_component_pack_workflow() {
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let host_error_wit_mismatch = stdout.contains("type `host-error` not defined in interface")
-            || stdout.contains("type 'host-error' not defined in interface")
-            || stderr.contains("type `host-error` not defined in interface")
-            || stderr.contains("type 'host-error' not defined in interface");
-        if host_error_wit_mismatch {
+        if has_external_guest_wit_mismatch(&stdout, &stderr) {
             eprintln!(
                 "skipping end_to_end_component_pack_workflow: external greentic-interfaces guest WIT mismatch\nstdout={}\nstderr={}",
                 stdout, stderr

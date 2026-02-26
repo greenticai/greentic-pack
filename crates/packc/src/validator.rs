@@ -272,7 +272,7 @@ fn build_engine() -> Result<Engine> {
     let mut config = Config::new();
     config.wasm_component_model(true);
     config.epoch_interruption(true);
-    Engine::new(&config)
+    Ok(Engine::new(&config)?)
 }
 
 fn run_component_validator(
@@ -282,14 +282,14 @@ fn run_component_validator(
     inputs: &PackInputs,
 ) -> Result<Vec<Diagnostic>> {
     let component = Component::from_binary(engine, &component.wasm)
-        .context("failed to load validator component")?;
+        .map_err(|err| anyhow!("failed to load validator component: {err}"))?;
 
     let mut store = Store::new(engine, ValidatorCtx::new());
     store.limiter(|ctx| &mut ctx.limits);
     store.set_epoch_deadline(1);
 
     let validator = PackValidator::instantiate(&mut store, &component, linker)
-        .context("failed to instantiate validator component")?;
+        .map_err(|err| anyhow!("failed to instantiate validator component: {err}"))?;
     let guest = validator.greentic_pack_validate_validator();
 
     let engine = engine.clone();
@@ -301,14 +301,14 @@ fn run_component_validator(
 
     let applies = guest
         .call_applies(&mut store, inputs)
-        .context("validator applies call failed")?;
+        .map_err(|err| anyhow!("validator applies call failed: {err}"))?;
     if !applies {
         return Ok(Vec::new());
     }
 
     let diags = guest
         .call_validate(&mut store, inputs)
-        .context("validator validate call failed")?;
+        .map_err(|err| anyhow!("validator validate call failed: {err}"))?;
     Ok(convert_diagnostics(diags))
 }
 

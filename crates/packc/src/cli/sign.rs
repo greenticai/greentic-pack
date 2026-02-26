@@ -67,18 +67,28 @@ pub fn handle(args: SignArgs, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": "signed",
+                "status": crate::cli_i18n::t("cli.sign.status.signed"),
                 "manifest": manifest_path,
                 "key_id": args.key_id,
                 "signatures": signed_manifest.signatures.signatures.len(),
             }))?
         );
     } else {
+        println!("{}", crate::cli_i18n::t("cli.sign.signed_manifest"));
         println!(
-            "signed manifest\n  manifest: {}\n  key_id: {}\n  signatures: {}",
-            manifest_path.display(),
-            args.key_id,
-            signed_manifest.signatures.signatures.len()
+            "{}",
+            crate::cli_i18n::tf("cli.sign.manifest", &[&manifest_path.display().to_string()])
+        );
+        println!(
+            "{}",
+            crate::cli_i18n::tf("cli.sign.key_id", &[&args.key_id])
+        );
+        println!(
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.sign.signatures",
+                &[&signed_manifest.signatures.signatures.len().to_string()]
+            )
         );
     }
 

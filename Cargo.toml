@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
-version = "0.4.96"
+version = "0.4.97"
 license = "MIT"
 
 [workspace.dependencies]
@@ -41,10 +41,10 @@ pkcs8 = { version = "0.10", features = ["pem"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
-greentic-types = { version = ">=0.4.55, <0.5" }
-greentic-flow = { version = ">=0.4.48, <0.5" }
-greentic-interfaces-host = { version = ">=0.4.106, <0.5" }
-greentic-interfaces-wasmtime = { version = ">=0.4.106, <0.5" }
+greentic-types = { version = "0.4"}
+greentic-flow = { version = "0.4" }
+greentic-interfaces-host = { version = "0.4" }
+greentic-interfaces-wasmtime = { version = "0.4" }
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
 greentic-config-types = "0.4"
 greentic-config = "0.4"
@@ -53,17 +53,20 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 pack_component_template = { version = "0.4", path = "crates/pack_component_template" }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
 tempfile = "3"
-rand_core_06 = { package = "rand_core", version = "0.6", features = ["std"] }
+rand_core = "0.10"
+getrandom = "0.4"
 rustls-pki-types = "1"
 x509-parser = "0.18"
 regex = "1"
 wit-component = "0.245"
 greentic-distributor-client = { version = ">=0.4.31, <0.5", default-features = false, features = ["reqwest", "dist-client"] }
 schemars = "1"
-wasmtime = "41"
-wasmtime-wasi = "41"
+wasmtime = "42"
+wasmtime-wasi = "42"
 assert_cmd = "2"
 indoc = "2"
 predicates = "3"
 wit-bindgen = { version = "0.53", default-features = false, features = ["macros", "realloc"] }
 indexmap = "2"
+sys-locale = "0.3"
+unic-langid = "0.9"

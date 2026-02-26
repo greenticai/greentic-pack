@@ -5,6 +5,9 @@ use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
+use crate::config::load_pack_config;
+use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
+use crate::runtime::RuntimeContext;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use greentic_distributor_client::{DistClient, DistOptions};
@@ -20,9 +23,6 @@ use wasmtime::Engine;
 use wasmtime::component::{Component as WasmtimeComponent, Linker};
 
 use crate::component_host_stubs::{DescribeHostState, add_describe_host_imports};
-use crate::config::load_pack_config;
-use crate::flow_resolve::{read_flow_resolve_summary_for_flow, strip_file_uri_prefix};
-use crate::runtime::RuntimeContext;
 
 #[derive(Debug, Args)]
 pub struct ResolveArgs {
@@ -60,7 +60,10 @@ pub async fn handle(args: ResolveArgs, runtime: &RuntimeContext, emit_path: bool
     let lock = PackLockV1::new(entries);
     write_pack_lock(&lock_path, &lock)?;
     if emit_path {
-        eprintln!("wrote {}", lock_path.display());
+        eprintln!(
+            "{}",
+            crate::cli_i18n::tf("cli.common.wrote_path", &[&lock_path.display().to_string()])
+        );
     }
 
     Ok(())
@@ -320,14 +323,14 @@ fn describe_component(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe
 }
 
 fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
+    let component = WasmtimeComponent::from_binary(engine, bytes)
+        .map_err(|err| anyhow!("decode component bytes: {err}"))?;
     let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance = linker
         .instantiate(&mut store, &component)
-        .context("instantiate component root world")?;
+        .map_err(|err| anyhow!("instantiate component root world: {err}"))?;
 
     let descriptor = [
         "component-descriptor",
@@ -346,10 +349,10 @@ fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<Component
     .ok_or_else(|| anyhow!("missing exported describe function"))?;
     let describe_func = instance
         .get_typed_func::<(), (Vec<u8>,)>(&mut store, &describe_export)
-        .context("lookup component-descriptor.describe")?;
+        .map_err(|err| anyhow!("lookup component-descriptor.describe: {err}"))?;
     let (describe_bytes,) = describe_func
         .call(&mut store, ())
-        .context("call component-descriptor.describe")?;
+        .map_err(|err| anyhow!("call component-descriptor.describe: {err}"))?;
     canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
 }
 

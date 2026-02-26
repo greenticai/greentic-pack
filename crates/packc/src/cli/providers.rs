@@ -84,11 +84,14 @@ pub fn list(args: &ListArgs) -> Result<()> {
     }
 
     if providers.is_empty() {
-        println!("No providers declared.");
+        println!(
+            "{}",
+            crate::cli_i18n::t("cli.providers.no_providers_declared")
+        );
         return Ok(());
     }
 
-    println!("{:<24} {:<28} {:<16} DETAILS", "ID", "RUNTIME", "KIND");
+    println!("{}", crate::cli_i18n::t("cli.providers.table_header"));
     for provider in providers {
         let runtime = format!(
             "{}::{}",
@@ -109,14 +112,23 @@ pub fn info(args: &InfoArgs) -> Result<()> {
     let pack = load_pack(args.pack.as_deref())?;
     let inline = match pack.manifest.provider_extension_inline() {
         Some(value) => value,
-        None => bail!("provider extension not present"),
+        None => bail!(
+            "{}",
+            crate::cli_i18n::t("cli.providers.error.extension_not_present")
+        ),
     };
     let Some(provider) = inline
         .providers
         .iter()
         .find(|p| p.provider_type == args.provider_id)
     else {
-        bail!("provider `{}` not found", args.provider_id);
+        bail!(
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.providers.error.provider_not_found",
+                &[&args.provider_id]
+            )
+        );
     };
 
     if args.json {
@@ -136,13 +148,16 @@ pub fn validate(args: &ValidateArgs) -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "status": "ok",
+                    "status": crate::cli_i18n::t("cli.status.ok"),
                     "providers_present": false,
                     "warnings": [],
                 }))?
             );
         } else {
-            println!("providers valid (extension not present)");
+            println!(
+                "{}",
+                crate::cli_i18n::t("cli.providers.valid_extension_not_present")
+            );
         }
         return Ok(());
     };
@@ -161,17 +176,23 @@ pub fn validate(args: &ValidateArgs) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": "ok",
+                "status": crate::cli_i18n::t("cli.status.ok"),
                 "providers_present": true,
                 "warnings": warnings,
             }))?
         );
     } else if warnings.is_empty() {
-        println!("providers valid");
+        println!("{}", crate::cli_i18n::t("cli.providers.valid"));
     } else {
-        println!("providers valid with warnings:");
+        println!(
+            "{}",
+            crate::cli_i18n::t("cli.providers.valid_with_warnings")
+        );
         for warning in warnings {
-            println!("  - {warning}");
+            println!(
+                "{}",
+                crate::cli_i18n::tf("cli.providers.warning_item", &[&warning])
+            );
         }
     }
 

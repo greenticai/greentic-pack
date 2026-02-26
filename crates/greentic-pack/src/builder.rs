@@ -10,9 +10,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use blake3::Hasher;
 use ed25519_dalek::Signer as _;
 use ed25519_dalek::SigningKey;
+use getrandom::fill as fill_random;
 use greentic_types::cbor::canonical;
 use pkcs8::EncodePrivateKey;
-use rand_core_06::OsRng;
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ED25519};
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use schemars::JsonSchema;
@@ -826,8 +826,9 @@ pub(crate) fn signature_digest_from_entries(
 }
 
 fn dev_signature(digest: &blake3::Hash) -> Result<(SignatureEnvelope, Option<Vec<u8>>)> {
-    let mut rng = OsRng;
-    let signing_key = SigningKey::generate(&mut rng);
+    let mut secret = [0u8; 32];
+    fill_random(&mut secret).map_err(|err| anyhow!("failed to generate dev signing key: {err}"))?;
+    let signing_key = SigningKey::from_bytes(&secret);
     let signature = signing_key.sign(digest.as_bytes());
     let signature_bytes = signature.to_bytes();
 

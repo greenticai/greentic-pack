@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use greentic_interfaces_wasmtime::host_helpers::v1::state_store::{
     self as state_store_v1, StateStoreError, StateStoreHost,
 };
@@ -61,8 +61,9 @@ impl StateStoreHost for DescribeHostState {
 }
 
 pub fn add_describe_host_imports(linker: &mut Linker<DescribeHostState>) -> Result<()> {
-    add_to_linker_sync(linker).context("register wasi preview2 describe host stubs")?;
+    add_to_linker_sync(linker)
+        .map_err(|err| anyhow::anyhow!("register wasi preview2 describe host stubs: {err}"))?;
     state_store_v1::add_state_store_to_linker(linker, |host: &mut DescribeHostState| host)
-        .context("register state-store@1.0.0 describe host stub")?;
+        .map_err(|err| anyhow::anyhow!("register state-store@1.0.0 describe host stub: {err}"))?;
     Ok(())
 }

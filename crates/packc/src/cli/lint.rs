@@ -38,7 +38,7 @@ pub fn handle(args: LintArgs, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": "ok",
+                "status": crate::cli_i18n::t("cli.status.ok"),
                 "pack_id": cfg.pack_id,
                 "version": cfg.version,
                 "flows": compiled,
@@ -47,13 +47,25 @@ pub fn handle(args: LintArgs, json: bool) -> Result<()> {
             }))?
         );
     } else {
+        println!("{}", crate::cli_i18n::t("cli.lint.ok_header"));
         println!(
-            "lint ok\n  pack: {}@{}\n  flows: {}\n  components: {}\n  dependencies: {}",
-            cfg.pack_id,
-            cfg.version,
-            compiled,
-            cfg.components.len(),
-            cfg.dependencies.len()
+            "{}",
+            crate::cli_i18n::tf("cli.lint.pack", &[&cfg.pack_id, &cfg.version.to_string()])
+        );
+        println!(
+            "{}",
+            crate::cli_i18n::tf("cli.lint.flows", &[&compiled.to_string()])
+        );
+        println!(
+            "{}",
+            crate::cli_i18n::tf("cli.lint.components", &[&cfg.components.len().to_string()])
+        );
+        println!(
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.lint.dependencies",
+                &[&cfg.dependencies.len().to_string()]
+            )
         );
     }
 

@@ -644,14 +644,14 @@ fn describe_component_with_cache(
 }
 
 fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<ComponentDescribe> {
-    let component =
-        WasmtimeComponent::from_binary(engine, bytes).context("decode component bytes")?;
+    let component = WasmtimeComponent::from_binary(engine, bytes)
+        .map_err(|err| anyhow!("decode component bytes: {err}"))?;
     let mut store = wasmtime::Store::new(engine, DescribeHostState::default());
     let mut linker = Linker::new(engine);
     add_describe_host_imports(&mut linker)?;
     let instance = linker
         .instantiate(&mut store, &component)
-        .context("instantiate component root world")?;
+        .map_err(|err| anyhow!("instantiate component root world: {err}"))?;
 
     let descriptor = [
         "component-descriptor",
@@ -670,10 +670,10 @@ fn describe_component_untyped(engine: &Engine, bytes: &[u8]) -> Result<Component
     .ok_or_else(|| anyhow!("missing exported describe function"))?;
     let describe_func = instance
         .get_typed_func::<(), (Vec<u8>,)>(&mut store, &describe_export)
-        .context("lookup component-descriptor.describe")?;
+        .map_err(|err| anyhow!("lookup component-descriptor.describe: {err}"))?;
     let (describe_bytes,) = describe_func
         .call(&mut store, ())
-        .context("call component-descriptor.describe")?;
+        .map_err(|err| anyhow!("call component-descriptor.describe: {err}"))?;
     canonical::from_cbor(&describe_bytes).context("decode ComponentDescribe")
 }
 

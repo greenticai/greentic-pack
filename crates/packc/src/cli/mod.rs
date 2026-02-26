@@ -50,6 +50,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Locale used for CLI messages (fallback: LC_ALL/LC_MESSAGES/LANG/system/en)
+    #[arg(long, global = true)]
+    pub locale: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -170,6 +174,85 @@ pub fn run() -> Result<()> {
     Runtime::new()?.block_on(run_with_cli(Cli::parse(), false))
 }
 
+pub fn print_top_level_help() {
+    println!("{}", crate::cli_i18n::t("cli.help.title"));
+    println!();
+    println!("{}", crate::cli_i18n::t("cli.help.usage"));
+    println!();
+    println!("{}", crate::cli_i18n::t("cli.help.commands_header"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.build"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.lint"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.components"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.update"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.new"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.sign"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.verify"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.gui"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.doctor"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.inspect"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.inspect_lock"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.qa"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.config"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.plan"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.providers"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.add_extension"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.wizard"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.resolve"));
+    println!("{}", crate::cli_i18n::t("cli.help.command.help"));
+    println!();
+    println!("{}", crate::cli_i18n::t("cli.help.options_header"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.log"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.offline"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.cache_dir"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.config_override"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.json"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.locale"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.help"));
+    println!("{}", crate::cli_i18n::t("cli.help.option.version"));
+}
+
+pub fn print_help_for_path(path: &[String]) -> bool {
+    let key = match path {
+        [] => "cli.help.page.root",
+        [a] if a == "build" => "cli.help.page.build",
+        [a] if a == "lint" => "cli.help.page.lint",
+        [a] if a == "components" => "cli.help.page.components",
+        [a] if a == "update" => "cli.help.page.update",
+        [a] if a == "new" => "cli.help.page.new",
+        [a] if a == "sign" => "cli.help.page.sign",
+        [a] if a == "verify" => "cli.help.page.verify",
+        [a] if a == "gui" => "cli.help.page.gui",
+        [a] if a == "doctor" => "cli.help.page.doctor",
+        [a] if a == "inspect" => "cli.help.page.inspect",
+        [a] if a == "inspect-lock" => "cli.help.page.inspect_lock",
+        [a] if a == "qa" => "cli.help.page.qa",
+        [a] if a == "config" => "cli.help.page.config",
+        [a] if a == "plan" => "cli.help.page.plan",
+        [a] if a == "providers" => "cli.help.page.providers",
+        [a] if a == "add-extension" => "cli.help.page.add_extension",
+        [a] if a == "wizard" => "cli.help.page.wizard",
+        [a] if a == "resolve" => "cli.help.page.resolve",
+        [a, b] if a == "gui" && b == "loveable-convert" => "cli.help.page.gui_loveable_convert",
+        [a, b] if a == "providers" && b == "list" => "cli.help.page.providers_list",
+        [a, b] if a == "providers" && b == "info" => "cli.help.page.providers_info",
+        [a, b] if a == "providers" && b == "validate" => "cli.help.page.providers_validate",
+        [a, b] if a == "add-extension" && b == "provider" => "cli.help.page.add_extension_provider",
+        [a, b] if a == "add-extension" && b == "capability" => {
+            "cli.help.page.add_extension_capability"
+        }
+        [a, b] if a == "wizard" && b == "new-app" => "cli.help.page.wizard_new_app",
+        [a, b] if a == "wizard" && b == "new-extension" => "cli.help.page.wizard_new_extension",
+        [a, b] if a == "wizard" && b == "add-component" => "cli.help.page.wizard_add_component",
+        _ => return false,
+    };
+
+    if !crate::cli_i18n::has(key) {
+        return false;
+    }
+    println!("{}", crate::cli_i18n::t(key));
+    true
+}
+
 /// Resolve the logging filter to use for telemetry initialisation.
 pub fn resolve_env_filter(cli: &Cli) -> String {
     std::env::var("PACKC_LOG").unwrap_or_else(|_| cli.verbosity.clone())
@@ -177,6 +260,8 @@ pub fn resolve_env_filter(cli: &Cli) -> String {
 
 /// Execute the CLI using a pre-parsed argument set.
 pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
+    crate::cli_i18n::init_locale(cli.locale.as_deref());
+
     let runtime = runtime::resolve_runtime(
         Some(std::env::current_dir()?.as_path()),
         cli.cache_dir.as_deref(),
@@ -205,7 +290,7 @@ pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
         Command::Gui(cmd) => self::gui::handle(cmd, cli.json, &runtime).await?,
         Command::Inspect(args) | Command::Doctor(args) => {
             if warn_inspect_alias {
-                eprintln!("WARNING: `inspect` is deprecated; use `doctor`.");
+                eprintln!("{}", crate::cli_i18n::t("cli.warn.inspect_deprecated"));
             }
             self::inspect::handle(args, cli.json, &runtime).await?
         }

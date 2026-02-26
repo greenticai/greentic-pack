@@ -40,7 +40,10 @@ pub fn handle(args: VerifyArgs, json: bool) -> Result<()> {
         .context("manifest.cbor is not a valid PackManifest")?;
 
     if manifest.signatures.signatures.is_empty() {
-        anyhow::bail!("no signatures present in manifest");
+        anyhow::bail!(
+            "{}",
+            crate::cli_i18n::t("cli.verify.error.no_signatures_present")
+        );
     }
 
     let public_pem = fs::read_to_string(&args.key)
@@ -73,23 +76,39 @@ pub fn handle(args: VerifyArgs, json: bool) -> Result<()> {
     }
 
     if !verified {
-        anyhow::bail!("no signatures verified: {}", errors.join(", "));
+        anyhow::bail!(
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.verify.error.no_signatures_verified",
+                &[&errors.join(", ")]
+            )
+        );
     }
 
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": "verified",
+                "status": crate::cli_i18n::t("cli.verify.status.verified"),
                 "manifest": manifest_path,
                 "signatures": manifest.signatures.signatures.len(),
             }))?
         );
     } else {
+        println!("{}", crate::cli_i18n::t("cli.verify.verified_manifest"));
         println!(
-            "verified manifest\n  manifest: {}\n  signatures checked: {}",
-            manifest_path.display(),
-            manifest.signatures.signatures.len()
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.verify.manifest",
+                &[&manifest_path.display().to_string()]
+            )
+        );
+        println!(
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.verify.signatures_checked",
+                &[&manifest.signatures.signatures.len().to_string()]
+            )
         );
     }
 

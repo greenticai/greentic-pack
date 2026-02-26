@@ -50,7 +50,7 @@ pub fn handle(args: UpdateArgs, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": "ok",
+                "status": crate::cli_i18n::t("cli.status.ok"),
                 "pack_dir": pack_dir,
                 "components": {
                     "added": component_stats.added,
@@ -75,13 +75,18 @@ pub fn handle(args: UpdateArgs, json: bool) -> Result<()> {
             "updated pack manifest"
         );
         println!(
-            "pack.yaml updated (components: +{}, -{}, total {}; flows: +{}, -{}, total {})",
-            component_stats.added,
-            component_stats.removed,
-            component_stats.total,
-            flow_stats.added,
-            flow_stats.removed,
-            flow_stats.total
+            "{}",
+            crate::cli_i18n::tf(
+                "cli.update.pack_yaml_updated",
+                &[
+                    &component_stats.added.to_string(),
+                    &component_stats.removed.to_string(),
+                    &component_stats.total.to_string(),
+                    &flow_stats.added.to_string(),
+                    &flow_stats.removed.to_string(),
+                    &flow_stats.total.to_string(),
+                ]
+            )
         );
     }
 
