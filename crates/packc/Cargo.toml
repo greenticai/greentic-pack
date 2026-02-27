@@ -16,6 +16,7 @@ include = [
     "README.md",
     "bin/**",
     "src/**",
+    "tests/fixtures/wizard/extensions.json",
     "assets/*.wasm",
     "i18n/**/*.json",
 ]
