@@ -1,0 +1,188 @@
+{
+  "extension_types": [
+    {
+      "id": "messaging",
+      "name_key": "wizard.catalog.type.messaging.name",
+      "description_key": "wizard.catalog.type.messaging.description",
+      "edit_questions": [
+        {
+          "id": "entry_label",
+          "title_key": "wizard.update_extension_pack.edit.entry_label",
+          "default": "messaging"
+        }
+      ],
+      "templates": [
+        {
+          "id": "messaging-basic",
+          "name_key": "wizard.catalog.template.messaging_basic.name",
+          "description_key": "wizard.catalog.template.messaging_basic.description",
+          "qa_questions": [
+            {
+              "id": "display_name",
+              "title_key": "wizard.qa.display_name",
+              "default": "Messaging extension"
+            }
+          ],
+          "plan": [
+            {
+              "type": "ensure_dir",
+              "paths": ["flows", "components", "i18n"]
+            },
+            {
+              "type": "delegate",
+              "target": "flow",
+              "id": "flow.setup",
+              "mode": "setup"
+            },
+            {
+              "type": "write_files",
+              "files": {
+                "README.md": "# {{qa.display_name}}\n\nTemplate: {{template_name}}\n",
+                "pack.yaml": "pack_id: messaging.extension\nversion: 0.1.0\nkind: application\npublisher: Greentic\n\ncomponents: []\nflows: []\ndependencies: []\nassets: []\n"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "events",
+      "name_key": "wizard.catalog.type.events.name",
+      "description_key": "wizard.catalog.type.events.description"
+    },
+    {
+      "id": "oauth",
+      "name_key": "wizard.catalog.type.oauth.name",
+      "description_key": "wizard.catalog.type.oauth.description"
+    },
+    {
+      "id": "secrets",
+      "name_key": "wizard.catalog.type.secrets.name",
+      "description_key": "wizard.catalog.type.secrets.description"
+    },
+    {
+      "id": "state",
+      "name_key": "wizard.catalog.type.state.name",
+      "description_key": "wizard.catalog.type.state.description"
+    },
+    {
+      "id": "telemetry",
+      "name_key": "wizard.catalog.type.telemetry.name",
+      "description_key": "wizard.catalog.type.telemetry.description"
+    },
+    {
+      "id": "control",
+      "name_key": "wizard.catalog.type.control.name",
+      "description_key": "wizard.catalog.type.control.description"
+    },
+    {
+      "id": "observer",
+      "name_key": "wizard.catalog.type.observer.name",
+      "description_key": "wizard.catalog.type.observer.description"
+    },
+    {
+      "id": "capability-offer",
+      "name_key": "wizard.catalog.type.capability_offer.name",
+      "description_key": "wizard.catalog.type.capability_offer.description"
+    },
+    {
+      "id": "custom-scaffold",
+      "name_key": "wizard.catalog.type.custom_scaffold.name",
+      "description_key": "wizard.catalog.type.custom_scaffold.description",
+      "edit_questions": [
+        {
+          "id": "entry_label",
+          "title_key": "wizard.update_extension_pack.edit.entry_label",
+          "default": "custom"
+        }
+      ],
+      "templates": [
+        {
+          "id": "custom-scaffold-template",
+          "name_key": "wizard.catalog.template.custom_scaffold.name",
+          "description_key": "wizard.catalog.template.custom_scaffold.description",
+          "qa_questions": [
+            {
+              "id": "display_name",
+              "title_key": "wizard.qa.display_name",
+              "default": "Custom extension"
+            }
+          ],
+          "plan": [
+            {
+              "type": "ensure_dir",
+              "paths": ["flows", "components", "i18n"]
+            },
+            {
+              "type": "write_files",
+              "files": {
+                "README.md": "# {{qa.display_name}}\n\nCanonical key: {{canonical_extension_key}}\n",
+                "pack.yaml": "pack_id: custom.extension\nversion: 0.1.0\nkind: application\npublisher: Greentic\n\ncomponents: []\nflows: []\ndependencies: []\nassets: []\n",
+                "flows/main.ygtc": "id: main\ntype: messaging\nnodes: {}\n"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "runcli-hook",
+      "name_key": "wizard.catalog.type.runcli_hook.name",
+      "description_key": "wizard.catalog.type.runcli_hook.description",
+      "templates": [
+        {
+          "id": "runcli-hook-template",
+          "name_key": "wizard.catalog.template.runcli_hook.name",
+          "description_key": "wizard.catalog.template.runcli_hook.description",
+          "qa_questions": [
+            {
+              "id": "display_name",
+              "title_key": "wizard.qa.display_name",
+              "default": "Hook display name"
+            }
+          ],
+          "plan": [
+            {
+              "type": "ensure_dir",
+              "paths": ["flows", "components", "i18n"]
+            },
+            {
+              "type": "run_cli",
+              "command": "greentic-runcli-hook",
+              "args": ["--label", "{{qa.display_name}}"]
+            },
+            {
+              "type": "write_files",
+              "files": {
+                "README.md": "# RunCli hook\n"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "runcli-invalid",
+      "name_key": "wizard.catalog.type.runcli_invalid.name",
+      "description_key": "wizard.catalog.type.runcli_invalid.description",
+      "templates": [
+        {
+          "id": "runcli-invalid-template",
+          "name_key": "wizard.catalog.template.runcli_invalid.name",
+          "description_key": "wizard.catalog.template.runcli_invalid.description",
+          "plan": [
+            {
+              "type": "ensure_dir",
+              "paths": ["flows", "components", "i18n"]
+            },
+            {
+              "type": "run_cli",
+              "command": "greentic-runcli-hook",
+              "args": ["--missing", "{{qa.missing}}"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

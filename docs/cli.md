@@ -302,19 +302,54 @@ greentic-pack verify --pack <DIR> --key <FILE> [--manifest <FILE>]
 
 ### `wizard`
 
-Scaffold or amend packs.
+Run the interactive wizard.
 
 ```
-greentic-pack wizard new-app <PACK_ID> --out <DIR> [--locale <LOCALE>] [--name <NAME>]
-greentic-pack wizard new-extension <PACK_ID> --kind <KIND> --out <DIR> [--locale <LOCALE>] [--name <NAME>]
-greentic-pack wizard add-component <REF_OR_ID> --pack <DIR> [--use-describe-cache] [--force] [--dry-run]
+greentic-pack wizard
 ```
 
-Example:
+Main menu:
+- Create application pack
+- Update application pack
+- Create extension pack
+- Update extension pack
+- Exit
 
-```
-greentic-pack wizard add-component oci://ghcr.io/acme/components/demo:1.2.3 --pack ./demo-pack
-```
+Navigation contract:
+- Main menu: `0) Exit`
+- Submenus: `0) Back`, `M) Main Menu`
+
+Create application pack flow:
+- asks pack id and pack dir (`./<pack-id>` default)
+- setup menu: `Edit flows`, `Add/edit components`, `Finalize`
+- delegates:
+  - `Edit flows` -> `greentic-flow wizard` (cwd = pack dir)
+  - `Add/edit components` -> `greentic-component wizard` (cwd = pack dir)
+- finalize pipeline:
+  - `greentic-pack doctor --in <DIR>`
+  - `greentic-pack build --in <DIR>`
+  - optional sign prompt (`greentic-pack sign --pack <DIR> --key <FILE>`)
+
+Update application pack flow:
+- asks pack dir (`.` default)
+- menu: `Edit flows`, `Add/edit components`, `Run update & validate`, `Sign`
+- `Run update & validate` executes `doctor --in <DIR>` then `build --in <DIR>` then optional sign
+- after successful delegate from flows/components, wizard auto-runs update & validate
+
+Create extension pack flow:
+- asks catalog ref (default `oci://ghcr.io/greenticai/catalogs/extensions:latest`)
+- supports `fixture://extensions.json`, `file://<path>`, and `oci://...`
+- choose extension type (with explanation), choose template, choose pack dir
+- catalog labels can be provided via i18n keys in catalog (`name_key`, `description_key`)
+- applies scaffold plan, then runs finalize (`doctor --in`, `build --in`, optional sign)
+- includes a required `Custom extension` scaffold path
+- on catalog/template/delegate failures: localized error + `0) Back` / `M) Main Menu`
+
+Update extension pack flow:
+- asks pack dir + catalog ref
+- menu: `Edit extension entries`, `Edit flows`, `Add/edit components`, `Run update & validate`, `Sign`
+- `Run update & validate` executes `doctor --in <DIR>` then `build --in <DIR>` then optional sign
+- `Edit extension entries` writes catalog answers under `extensions/<type>.json` and merges inline extension data into `pack.yaml`
 
 ### `config`
 

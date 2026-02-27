@@ -23,6 +23,9 @@ pub mod sign;
 pub mod update;
 pub mod verify;
 pub mod wizard;
+mod wizard_catalog;
+mod wizard_i18n;
+mod wizard_ui;
 
 use crate::telemetry::set_current_tenant_ctx;
 use crate::{build, new, runtime};
@@ -96,9 +99,8 @@ pub enum Command {
     /// Add data to pack extensions (provider extension path is legacy/schema-core).
     #[command(subcommand)]
     AddExtension(self::add_extension::AddExtensionCommand),
-    /// Pack wizard helpers.
-    #[command(subcommand)]
-    Wizard(self::wizard::WizardCommand),
+    /// Interactive pack wizard.
+    Wizard(self::wizard::WizardArgs),
     /// Resolve component references and write pack.lock.cbor
     Resolve(self::resolve::ResolveArgs),
 }
@@ -240,9 +242,6 @@ pub fn print_help_for_path(path: &[String]) -> bool {
         [a, b] if a == "add-extension" && b == "capability" => {
             "cli.help.page.add_extension_capability"
         }
-        [a, b] if a == "wizard" && b == "new-app" => "cli.help.page.wizard_new_app",
-        [a, b] if a == "wizard" && b == "new-extension" => "cli.help.page.wizard_new_extension",
-        [a, b] if a == "wizard" && b == "add-component" => "cli.help.page.wizard_add_component",
         _ => return false,
     };
 
@@ -260,6 +259,7 @@ pub fn resolve_env_filter(cli: &Cli) -> String {
 
 /// Execute the CLI using a pre-parsed argument set.
 pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
+    let wizard_locale = cli.locale.clone();
     crate::cli_i18n::init_locale(cli.locale.as_deref());
 
     let runtime = runtime::resolve_runtime(
@@ -300,7 +300,7 @@ pub async fn run_with_cli(cli: Cli, warn_inspect_alias: bool) -> Result<()> {
         Command::Plan(args) => self::plan::handle(&args)?,
         Command::Providers(cmd) => self::providers::run(cmd)?,
         Command::AddExtension(cmd) => self::add_extension::handle(cmd)?,
-        Command::Wizard(cmd) => self::wizard::handle(cmd, &runtime)?,
+        Command::Wizard(args) => self::wizard::handle(args, &runtime, wizard_locale.as_deref())?,
         Command::Resolve(args) => self::resolve::handle(args, &runtime, true).await?,
     }
 

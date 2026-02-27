@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
-version = "0.4.97"
+version = "0.4.98"
 license = "MIT"
 
 [workspace.dependencies]
@@ -47,6 +47,8 @@ greentic-interfaces-host = { version = "0.4" }
 greentic-interfaces-wasmtime = { version = "0.4" }
 greentic-telemetry = { version = "0.4", features = ["otlp"] }
 greentic-config-types = "0.4"
+greentic-qa-lib = "0.4"
+greentic-i18n-lib = "0.4"
 greentic-config = "0.4"
 greentic-pack = { package = "greentic-pack-lib", path = "crates/greentic-pack", version="0.4" }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

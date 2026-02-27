@@ -11,6 +11,14 @@ keywords = ["greentic", "cli", "pack", "wasm"]
 categories = ["development-tools"]
 documentation = "https://docs.greentic.ai/"
 homepage = "https://github.com/greentic-ai/greentic-pack"
+include = [
+    "Cargo.toml",
+    "README.md",
+    "bin/**",
+    "src/**",
+    "assets/*.wasm",
+    "i18n/**/*.json",
+]
 
 [features]
 default = []
@@ -47,6 +55,8 @@ getrandom = { workspace = true }
 greentic-pack = { workspace = true }
 greentic-config = { workspace = true }
 greentic-config-types = { workspace = true }
+greentic-qa-lib = { workspace = true }
+greentic-i18n-lib = { workspace = true }
 semver = { workspace = true }
 schemars = { workspace = true }
 zip = { workspace = true }
