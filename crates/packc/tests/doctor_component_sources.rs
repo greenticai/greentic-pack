@@ -54,7 +54,7 @@ nodes:
                 "component_id": "ai.greentic.component-templates",
                 "source": {
                     "kind": "oci",
-                    "ref": "oci://ghcr.io/greentic-ai/components/templates@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    "ref": "oci://ghcr.io/greenticai/components/templates@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 },
                 "digest": digest
             }
@@ -304,3 +304,4 @@ fn doctor_rejects_missing_component_sources() {
         "expected missing component reference diagnostic"
     );
 }
+

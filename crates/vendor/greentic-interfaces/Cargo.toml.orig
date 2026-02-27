@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 build = "build.rs"
 license = "MIT"
-repository = "https://github.com/greentic-ai/greentic-interfaces"
+repository = "https://github.com/greenticai/greentic-interfaces"
 description = "Greentic ABI: WIT contracts, generated bindings, thin mappers"
 readme = "README.md"
 documentation = "https://docs.rs/greentic-interfaces"
@@ -166,3 +166,4 @@ serde_json = { workspace = true }
 insta = { workspace = true }
 wit-parser = { workspace = true }
 wasmtime-wasi = { workspace = true }
+

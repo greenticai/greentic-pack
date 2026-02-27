@@ -6,9 +6,10 @@
       "component_id": "ai.greentic.component-templates",
       "source": {
         "kind": "oci",
-        "ref": "oci://ghcr.io/greentic-ai/components/templates:latest"
+        "ref": "oci://ghcr.io/greenticai/components/templates:latest"
       },
       "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     }
   }
 }
+

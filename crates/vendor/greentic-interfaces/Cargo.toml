@@ -34,7 +34,7 @@ categories = [
     "api-bindings",
 ]
 license = "MIT"
-repository = "https://github.com/greentic-ai/greentic-interfaces"
+repository = "https://github.com/greenticai/greentic-interfaces"
 resolver = "2"
 
 [features]
@@ -285,3 +285,4 @@ features = [
     "std",
 ]
 default-features = false
+

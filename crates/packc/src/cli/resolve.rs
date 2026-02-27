@@ -466,7 +466,7 @@ mod tests {
                     component_id: component_id.clone(),
                     source: FlowResolveSummarySourceRefV1::Oci {
                         r#ref:
-                            "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
+                            "oci://ghcr.io/greenticai/components/component-adaptive-card:latest"
                                 .to_string(),
                     },
                     digest: format!("sha256:{}", "a".repeat(64)),
@@ -502,7 +502,7 @@ mod tests {
             NodeResolveSummaryV1 {
                 component_id: component_id.clone(),
                 source: FlowResolveSummarySourceRefV1::Oci {
-                    r#ref: "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
+                    r#ref: "oci://ghcr.io/greenticai/components/component-adaptive-card:latest"
                         .to_string(),
                 },
                 digest: format!("sha256:{}", "b".repeat(64)),
@@ -514,7 +514,7 @@ mod tests {
             NodeResolveSummaryV1 {
                 component_id: component_id.clone(),
                 source: FlowResolveSummarySourceRefV1::Oci {
-                    r#ref: "oci://ghcr.io/greentic-ai/components/component-adaptive-card:latest"
+                    r#ref: "oci://ghcr.io/greenticai/components/component-adaptive-card:latest"
                         .to_string(),
                 },
                 digest: format!("sha256:{}", "c".repeat(64)),
@@ -533,3 +533,4 @@ mod tests {
         assert!(err.to_string().contains("points to different artifacts"));
     }
 }
+
