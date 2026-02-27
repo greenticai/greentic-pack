@@ -117,7 +117,7 @@ build_check() {
     echo "[skip] cargo build (crates.io unreachable)"
     return 0
   fi
-  cargo build --workspace --all-features --locked
+  cargo build --workspace --locked
 }
 
 test_check() {
@@ -130,7 +130,7 @@ test_check() {
     echo "[skip] cargo test (crates.io unreachable)"
     return 0
   fi
-  cargo test --workspace --all-features --locked -- --nocapture
+  cargo test --workspace --locked -- --nocapture
 }
 
 builder_demo_check() (

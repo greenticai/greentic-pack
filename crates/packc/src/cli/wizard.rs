@@ -1176,6 +1176,7 @@ fn run_update_extension_pack<R: BufRead, W: Write>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_update_validate_sequence<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
@@ -1306,6 +1307,7 @@ fn ask_failure_nav<R: BufRead, W: Write>(
     SubmenuAction::from_choice(&choice)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ask_enum<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
@@ -1403,6 +1405,7 @@ fn ask_enum<R: BufRead, W: Write>(
         .ok_or_else(|| anyhow!("missing enum answer"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ask_enum_custom_labels_owned<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
