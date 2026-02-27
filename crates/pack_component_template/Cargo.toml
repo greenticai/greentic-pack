@@ -6,8 +6,9 @@ license.workspace = true
 authors = ["Greentic <engineering@greentic.dev>"]
 description = "Internal template used by packc for generating pack components"
 readme = "README.md"
-repository = "https://github.com/greentic-ai/greentic-pack"
+repository = "https://github.com/greenticai/greentic-pack"
 publish = true
 
 [lib]
 path = "src/lib.rs"
+

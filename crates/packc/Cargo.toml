@@ -4,13 +4,13 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 authors = ["Greentic <engineering@greentic.ai"]
-repository = "https://github.com/greentic-ai/greentic-pack"
+repository = "https://github.com/greenticai/greentic-pack"
 description = "Greentic pack builder CLI"
 readme = "README.md"
 keywords = ["greentic", "cli", "pack", "wasm"]
 categories = ["development-tools"]
 documentation = "https://docs.greentic.ai/"
-homepage = "https://github.com/greentic-ai/greentic-pack"
+homepage = "https://github.com/greenticai/greentic-pack"
 
 [features]
 default = []
@@ -75,3 +75,4 @@ assert_cmd = { workspace = true }
 indoc = { workspace = true }
 tempfile = { workspace = true }
 predicates = { workspace = true }
+

@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["greentic", "component", "wasm", "pack"]
 categories = ["wasm", "api-bindings"]
 documentation = "https://docs.greentic.ai/"
-homepage = "https://github.com/greentic-ai/greentic-pack"
+homepage = "https://github.com/greenticai/greentic-pack"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -22,3 +22,4 @@ serde_cbor = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 greentic-interfaces-host = { workspace = true }
+

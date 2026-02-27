@@ -116,7 +116,7 @@ fn messaging_validator_smoke() {
     add_extension_and_run_validator(
         "messaging",
         "messaging.dummy",
-        "oci://ghcr.io/greentic-ai/validators/messaging:latest",
+        "oci://ghcr.io/greenticai/validators/messaging:latest",
     );
 }
 
@@ -125,7 +125,7 @@ fn events_validator_smoke() {
     add_extension_and_run_validator(
         "events",
         "events.dummy",
-        "oci://ghcr.io/greentic-ai/validators/events:latest",
+        "oci://ghcr.io/greenticai/validators/events:latest",
     );
 }
 
@@ -156,3 +156,4 @@ fn add_extension_updates_pack_yaml_in_place() {
         "provider entry missing from pack.yaml"
     );
 }
+

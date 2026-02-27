@@ -257,7 +257,7 @@ falls back to the component manifests bundled in the pack.
 - Override the default adapter by setting
   `GREENTIC_PACK_ADAPTER_25_06_18=/path/to/adapter.component.wasm` when needed.
 - packc pins a specific MCP adapter reference internally (`MCP_ADAPTER_25_06_18`);
-  current image: `ghcr.io/greentic-ai/greentic-mcp-adapter:25.06.18-v0.4.4`
+  current image: `ghcr.io/greenticai/greentic-mcp-adapter:25.06.18-v0.4.4`
   (digest to be added when published).
 - Use `mcp.exec` nodes to describe remote actions. Set the `component` field to
   the `mcp_components.id` you defined; the merged component handles the
@@ -385,3 +385,4 @@ Compatibility aliases are documented in `docs/vision/legacy.md`.
 | `schema_hash mismatch` / contract drift | Re-resolve component metadata (`greentic-pack resolve`) and verify component describe payloads match the expected operation/schema pair. |
 | `apply-answers output failed strict schema validation` | Fix answers or component QA logic so returned config matches `describe.config_schema`; errors include field paths and aggregated violations. |
 | Capability denied at runtime | Capability enforcement is owned by runtime/operator layers; ensure granted host profile matches component requirements. |
+

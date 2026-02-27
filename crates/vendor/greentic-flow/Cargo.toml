@@ -23,7 +23,7 @@ autobenches = false
 description = "Generic YGTC flow schema/loader/IR for self-describing component nodes."
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/greentic-ai/greentic-flow"
+repository = "https://github.com/greenticai/greentic-flow"
 
 [features]
 default = []
@@ -249,3 +249,4 @@ version = "1"
 
 [dev-dependencies.tempfile]
 version = "3"
+

@@ -25,7 +25,7 @@ const PACK_VALIDATOR_WORLDS: [&str; 2] = [
     "greentic:pack-validate@0.1.0/pack-validator",
     "greentic:pack-validate/pack-validator@0.1.0",
 ];
-pub const DEFAULT_VALIDATOR_ALLOW: &str = "oci://ghcr.io/greentic-ai/validators/";
+pub const DEFAULT_VALIDATOR_ALLOW: &str = "oci://ghcr.io/greenticai/validators/";
 const DEFAULT_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 
@@ -811,3 +811,4 @@ mod tests {
         assert_eq!(components[0].wasm, wasm_bytes);
     }
 }
+

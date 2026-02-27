@@ -1,6 +1,6 @@
 # PackValPR-04 — Add Validator-as-Pack/WASM support to `greentic-pack doctor` (no hardcoded domains)
 
-**Repo:** `greentic-ai/greentic-pack`
+**Repo:** `greenticai/greentic-pack`
 
 ## Goal
 Extend `greentic-pack doctor` so it can discover and run **validator components** shipped as WASM (optionally inside validator packs), without hardcoding messaging/events/secrets validators into greentic-pack.
@@ -26,7 +26,7 @@ Add flags to `greentic-pack doctor`:
 - `--format human|json` (keep existing `--json` alias)
 - `--validators-root <dir>` (default: `.greentic/validators`)
 - `--validator-pack <path|oci://...>` (repeatable)
-- `--validator-allow <prefix>` (repeatable; allowlist for OCI namespaces, default `oci://ghcr.io/greentic-ai/validators/`)
+- `--validator-allow <prefix>` (repeatable; allowlist for OCI namespaces, default `oci://ghcr.io/greenticai/validators/`)
 - `--validator-cache-dir <dir>` (default `.greentic/cache/validators`)
 - `--validator-policy required|optional` (default `optional`)
   - `required`: if a pack declares a validator ref and it cannot be loaded, fail validation
@@ -95,3 +95,4 @@ Test cases:
 - `greentic-pack doctor --pack X --validators-root tests/fixtures/validators` runs the validator and reports its diagnostics.
 - No domain hardcoding in greentic-pack.
 - Uses `greentic-types` validation model for output.
+
