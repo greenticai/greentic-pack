@@ -38,7 +38,7 @@ jobs:
           cargo install cargo-binstall --locked
         fi
         BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
-        BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force
+        BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force || cargo install greentic-component --locked --force
         BINSTALL_DISABLE_STRATEGIES=compile cargo binstall wasm-tools -y --force
       test-args: "--workspace --all-features --locked"
 
@@ -75,7 +75,7 @@ jobs:
             cargo install cargo-binstall --locked
           fi
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
-          BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force
+          BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force || cargo install greentic-component --locked --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall wasm-tools -y --force
       - name: Run semver checks with Rust 1.95
         run: |
