@@ -51,10 +51,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.95.0
+          toolchain: 1.94.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: semver-${{ runner.os }}-rust-1.95-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: semver-${{ runner.os }}-rust-1.94-${{ hashFiles('**/Cargo.lock') }}
       - name: Setup semver environment
         run: |
           bash ci/check_no_duplicate_canonical_wit.sh
@@ -77,13 +77,25 @@ jobs:
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force || cargo install greentic-component --locked --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall wasm-tools -y --force
-      - name: Run semver checks with Rust 1.95
+      - name: Resolve semver baseline tag
+        id: semver-baseline
         run: |
-          rustup override set 1.95.0
+          git fetch --tags --force
+          baseline_tag="$(git tag --sort=-v:refname 'v*' | sed -n '2p')"
+          if [ -z "$baseline_tag" ]; then
+            echo "Unable to determine previous stable v* tag for semver baseline" >&2
+            exit 1
+          fi
+          echo "baseline_tag=$baseline_tag" >> "$GITHUB_OUTPUT"
+          echo "Using semver baseline tag: $baseline_tag"
+      - name: Run semver checks against previous git tag
+        run: |
+          rustup override set 1.94.0
           rustc --version
           cargo --version
           cargo install cargo-semver-checks --locked --force
           cargo semver-checks check-release \
+            --baseline-rev "${{ steps.semver-baseline.outputs.baseline_tag }}" \
             --package greentic-pack \
             --package greentic-pack-lib \
             --package pack_component_template
