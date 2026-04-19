@@ -81,7 +81,7 @@ jobs:
         id: semver-baseline
         run: |
           git fetch --tags --force
-          baseline_tag="$(git tag --sort=-v:refname 'v*' | sed -n '2p')"
+          baseline_tag="$(git tag -l 'v*' --sort=-v:refname | sed -n '2p')"
           if [ -z "$baseline_tag" ]; then
             echo "Unable to determine previous stable v* tag for semver baseline" >&2
             exit 1
