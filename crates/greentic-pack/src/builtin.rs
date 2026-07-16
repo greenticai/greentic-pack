@@ -4,9 +4,30 @@
 //! This is the single source of truth shared by pack validation
 //! (`validate::ComponentReferencesExistValidator`) and the packc resolve/build
 //! pipeline, so they never drift. It MUST mirror the runner's `NodeKind`
-//! dispatch (`greentic-runner-host` engine): `session.wait`, `flow.call`,
-//! `provider.invoke`, `dw.agent`, `dw.agent_graph`, `sorla.call`,
-//! `operala.call`, `agentic.call`, and `emit.*`.
+//! dispatch (`greentic-runner-host` engine) — canonically its `NATIVE_OP_KEYS`
+//! in `runner/flow_adapter.rs`. A key the runner dispatches but this list omits
+//! makes `resolve`/`build` demand a component that can never exist, so the pack
+//! cannot be built at all.
+//!
+//! # Known drift — this list is NOT yet a full mirror
+//!
+//! The runner also dispatches `state.get`, `state.set`, `telco-x.call`, and
+//! `mcp`, none of which are below. Packs using them cannot be built today. They
+//! are deliberately left out of this change rather than fixed blind:
+//!
+//! - `mcp` in particular is NOT a safe addition as written.
+//!   [`is_builtin_component_id`] treats a listed kind as a prefix whenever a `.`
+//!   follows, so a bare `"mcp"` entry would also swallow **`mcp.exec`** — a real
+//!   component, shipped with its own wasm and manifest in `examples/weather-demo`
+//!   and `examples/adaptive-mcp-oauth-demo`. It would be silently reclassified as
+//!   engine-dispatched, skip resolution, and vanish from the built pack. Adding
+//!   `mcp` therefore needs exact-match semantics, not a list entry.
+//! - `var.set` is a third case: the designer emits it, and the engine has a
+//!   `NodeKind::VarSet`, but it is absent from the runner's own `NATIVE_OP_KEYS`
+//!   — so the runner must be fixed before this list can mirror it.
+//!
+//! Whoever closes that gap: read the runner, and check every addition against the
+//! `mcp.exec` hazard above before trusting the prefix rule.
 
 use greentic_types::Node;
 
@@ -22,6 +43,7 @@ const BUILTIN_KINDS: &[&str] = &[
     "sorla.call",
     "operala.call",
     "agentic.call",
+    "approval.call",
 ];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
@@ -78,6 +100,7 @@ mod tests {
             "sorla.call",
             "operala.call",
             "agentic.call",
+            "approval.call",
         ] {
             assert!(is_builtin_component_id(id), "{id} should be builtin");
         }
