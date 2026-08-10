@@ -38,3 +38,13 @@
 - `greentic-pack wizard apply` now also upserts `pack.extensions.json` from an `extension_dependencies` answers key (WS-D Phase 3b Task 2 — the WRITE side that pairs with the Phase 3a `ext://`/`store://` resolver). The key is an array of packc's existing `ExtensionDependency` serde shape (`{ "id", "role", "source": { "kind", "ref", "allow_tags" } }`). Parsing lives in `parse_extension_dependencies` and the merge in `upsert_extension_dependencies` (both in `crates/packc/src/cli/wizard.rs`), reusing `extension_refs::{read,write}_extensions_file`. Merge rule: dedupe by `id`, supplied wins (conflicting existing source is replaced and logged to stderr); unrelated existing entries (e.g. hand-authored) are preserved. Empty/absent `extension_dependencies` is a no-op (never creates or clobbers a file). `write_extensions_file` still validates, so version-tag `store://`/`oci://`/`repo://` refs require `allow_tags: true` unless digest-pinned. The catalog flip and publish are NOT done here.
 - The default wizard catalog is now `file://docs/extensions_capability_packs.catalog.v1.json`; the fixture catalog remains available for tests/dev and includes fixture-only `runcli` entries.
 - Cargo now resolves Greentic interface crates from published dependencies rather than the previously broken vendored-path patch overrides.
+- The bare `mcp` flow op-key is now classified as a runner builtin
+  (`crates/greentic-pack/src/builtin.rs`), so `resolve`/`build` no longer demand a
+  resolve-sidecar or resolve-summary entry for it. It lives in a new
+  `BUILTIN_EXACT_KINDS` list matched by EQUALITY ONLY, because the existing
+  `BUILTIN_KINDS` prefix rule would also capture `mcp.exec` — a real component
+  shipped in `examples/weather-demo` and `examples/adaptive-mcp-oauth-demo`,
+  which would then silently skip resolution and drop out of the built pack. The
+  remaining known drift from the runner's `NATIVE_OP_KEYS` (`state.get`,
+  `state.set`, `telco-x.call`) is unchanged and still needs the same
+  per-key hazard check.

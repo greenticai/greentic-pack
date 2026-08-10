@@ -11,23 +11,19 @@
 //!
 //! # Known drift — this list is NOT yet a full mirror
 //!
-//! The runner also dispatches `state.get`, `state.set`, `telco-x.call`, and
-//! `mcp`, none of which are below. Packs using them cannot be built today. They
-//! are deliberately left out of this change rather than fixed blind:
+//! The runner also dispatches `state.get`, `state.set` and `telco-x.call`,
+//! none of which are below. Packs using them cannot be built today. They are
+//! deliberately left out rather than fixed blind — each needs the same hazard
+//! check `mcp` got (see [`BUILTIN_EXACT_KINDS`]) before it is trusted to the
+//! prefix rule.
 //!
-//! - `mcp` in particular is NOT a safe addition as written.
-//!   [`is_builtin_component_id`] treats a listed kind as a prefix whenever a `.`
-//!   follows, so a bare `"mcp"` entry would also swallow **`mcp.exec`** — a real
-//!   component, shipped with its own wasm and manifest in `examples/weather-demo`
-//!   and `examples/adaptive-mcp-oauth-demo`. It would be silently reclassified as
-//!   engine-dispatched, skip resolution, and vanish from the built pack. Adding
-//!   `mcp` therefore needs exact-match semantics, not a list entry.
-//! - `var.set` is a third case: the designer emits it, and the engine has a
-//!   `NodeKind::VarSet`, but it is absent from the runner's own `NATIVE_OP_KEYS`
-//!   — so the runner must be fixed before this list can mirror it.
+//! `var.set` is a further case: the designer emits it, and the engine has a
+//! `NodeKind::VarSet`, but it is absent from the runner's own `NATIVE_OP_KEYS`
+//! — so the runner must be fixed before this list can mirror it.
 //!
 //! Whoever closes that gap: read the runner, and check every addition against the
-//! `mcp.exec` hazard above before trusting the prefix rule.
+//! `mcp.exec` hazard documented on [`BUILTIN_EXACT_KINDS`] before trusting the
+//! prefix rule.
 
 use greentic_types::Node;
 
@@ -46,11 +42,34 @@ const BUILTIN_KINDS: &[&str] = &[
     "approval.call",
 ];
 
+/// Builtin kinds that match ONLY on equality — never as a `<kind>.<suffix>`
+/// prefix.
+///
+/// `mcp` is here rather than in [`BUILTIN_KINDS`] because the prefix rule would
+/// also swallow **`mcp.exec`**, a real component shipped with its own wasm and
+/// manifest in `examples/weather-demo` and `examples/adaptive-mcp-oauth-demo`.
+/// Under the prefix rule `mcp.exec` would be silently reclassified as
+/// engine-dispatched, skip resolution, and vanish from the built pack — a
+/// working pack quietly losing a component, which is worse than the build
+/// failure this entry exists to fix.
+///
+/// The runner dispatches the bare `mcp` op-key natively (`NATIVE_OP_KEYS` in
+/// `runner/flow_adapter.rs`, executed by `runner/mcp_node.rs`), and
+/// `greentic-flow` lowers such a node to `component.id == "mcp"` with no
+/// operation. There is therefore no pack component to resolve, and demanding a
+/// resolve/summary entry for one made every flow containing an MCP node
+/// unbuildable.
+const BUILTIN_EXACT_KINDS: &[&str] = &["mcp"];
+
 /// Whether a component-id string names a runner builtin (engine-handled, with
 /// no pack component to resolve). Accepts both the bare kind (`dw.agent`) and
 /// the dotted form (`dw.agent.support`); `emit.*` is always builtin.
+///
+/// [`BUILTIN_EXACT_KINDS`] entries are matched by equality only — see that
+/// constant for why `mcp` must not participate in the dotted-prefix rule.
 pub fn is_builtin_component_id(id: &str) -> bool {
     id.starts_with("emit.")
+        || BUILTIN_EXACT_KINDS.contains(&id)
         || BUILTIN_KINDS.iter().any(|kind| {
             id == *kind
                 || id
@@ -111,6 +130,30 @@ mod tests {
             "agentic",
         ] {
             assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
+    /// The bare `mcp` op-key is engine-dispatched, so it needs no resolve or
+    /// summary entry. Without this, every flow carrying an MCP node failed
+    /// `build` with "missing resolve summary entries for nodes <id>".
+    #[test]
+    fn bare_mcp_is_builtin() {
+        assert!(is_builtin_component_id("mcp"));
+    }
+
+    /// `mcp.exec` is a REAL component (`examples/weather-demo`,
+    /// `examples/adaptive-mcp-oauth-demo` ship its wasm and manifest). Treating
+    /// `mcp` as a dotted prefix would reclassify it as engine-dispatched, skip
+    /// its resolution, and drop it from the built pack — silently. This is the
+    /// hazard that puts `mcp` in `BUILTIN_EXACT_KINDS` instead of
+    /// `BUILTIN_KINDS`; do not "simplify" the two lists into one.
+    #[test]
+    fn mcp_is_exact_match_only_and_never_swallows_mcp_exec() {
+        for id in ["mcp.exec", "mcp.anything", "mcp.exec.v2"] {
+            assert!(
+                !is_builtin_component_id(id),
+                "{id} is a pack component, not a builtin"
+            );
         }
     }
 }
