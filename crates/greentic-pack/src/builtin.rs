@@ -17,9 +17,11 @@
 //! check `mcp` got (see [`BUILTIN_EXACT_KINDS`]) before it is trusted to the
 //! prefix rule.
 //!
-//! `var.set` is a further case: the designer emits it, and the engine has a
-//! `NodeKind::VarSet`, but it is absent from the runner's own `NATIVE_OP_KEYS`
-//! — so the runner must be fixed before this list can mirror it.
+//! `var.set` used to be listed here as blocked on the runner. It is not: the
+//! runner's `NATIVE_OP_KEYS` governs loading a raw `.ygtc`, whereas a built pack
+//! reaches the engine through the compiled manifest, where `is_builtin` already
+//! carries a `"var."` prefix and a `"var.set"` arm writes `state.vars`. It is in
+//! [`BUILTIN_EXACT_KINDS`] below.
 //!
 //! Whoever closes that gap: read the runner, and check every addition against the
 //! `mcp.exec` hazard documented on [`BUILTIN_EXACT_KINDS`] before trusting the
@@ -59,7 +61,14 @@ const BUILTIN_KINDS: &[&str] = &[
 /// operation. There is therefore no pack component to resolve, and demanding a
 /// resolve/summary entry for one made every flow containing an MCP node
 /// unbuildable.
-const BUILTIN_EXACT_KINDS: &[&str] = &["mcp"];
+///
+/// `var.set` is here for the same reason and with the same hazard: the engine
+/// classifies it in `is_builtin` (a `"var."` prefix) and executes it through a
+/// `"var.set"` arm that writes `state.vars`, so it has no pack component
+/// either — while a prefix entry would capture any future `var.set.*`
+/// component. greentic-designer's Set Variable palette node emits exactly this
+/// op-key, and every flow using it was unbuildable.
+const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set"];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
 /// no pack component to resolve). Accepts both the bare kind (`dw.agent`) and
@@ -147,6 +156,23 @@ mod tests {
     /// its resolution, and drop it from the built pack — silently. This is the
     /// hazard that puts `mcp` in `BUILTIN_EXACT_KINDS` instead of
     /// `BUILTIN_KINDS`; do not "simplify" the two lists into one.
+    /// Set Variable is a first-class greentic-designer palette node; every flow
+    /// using it failed `build` with "missing resolve summary entries" until this
+    /// entry existed.
+    #[test]
+    fn bare_var_set_is_builtin() {
+        assert!(is_builtin_component_id("var.set"));
+    }
+
+    /// Exact-match only, for the same reason as `mcp`: a prefix entry would
+    /// capture a `var.set.*` component and silently drop it from the pack.
+    #[test]
+    fn var_set_is_exact_match_only() {
+        for id in ["var.set.custom", "var.setter", "var"] {
+            assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
     #[test]
     fn mcp_is_exact_match_only_and_never_swallows_mcp_exec() {
         for id in ["mcp.exec", "mcp.anything", "mcp.exec.v2"] {

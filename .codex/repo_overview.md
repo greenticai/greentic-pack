@@ -48,3 +48,12 @@
   remaining known drift from the runner's `NATIVE_OP_KEYS` (`state.get`,
   `state.set`, `telco-x.call`) is unchanged and still needs the same
   per-key hazard check.
+- `var.set` joins `mcp` in `BUILTIN_EXACT_KINDS` (`crates/greentic-pack/src/builtin.rs`).
+  greentic-designer's Set Variable palette node emits that op-key, so every flow
+  using it failed `build` with "missing resolve summary entries". Exact-match for
+  the same hazard as `mcp`: a prefix entry would capture a future `var.set.*`
+  component and silently drop it. The module doc's earlier claim that this was
+  blocked on the runner is corrected — `NATIVE_OP_KEYS` governs raw `.ygtc`
+  loading, while a built pack reaches the engine through the compiled manifest,
+  where a `"var."` prefix and a `"var.set"` arm already exist. Remaining drift:
+  `state.get`, `state.set`, `telco-x.call`.
