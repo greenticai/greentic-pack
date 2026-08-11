@@ -4,28 +4,71 @@
 //! This is the single source of truth shared by pack validation
 //! (`validate::ComponentReferencesExistValidator`) and the packc resolve/build
 //! pipeline, so they never drift. It MUST mirror the runner's `NodeKind`
-//! dispatch (`greentic-runner-host` engine) — canonically its `NATIVE_OP_KEYS`
-//! in `runner/flow_adapter.rs`. A key the runner dispatches but this list omits
-//! makes `resolve`/`build` demand a component that can never exist, so the pack
-//! cannot be built at all.
+//! dispatch (`greentic-runner-host` engine). A key the runner dispatches but
+//! this list omits makes `resolve`/`build` demand a component that can never
+//! exist, so the pack cannot be built at all.
 //!
-//! # Known drift — this list is NOT yet a full mirror
+//! # Read the right runner list
 //!
-//! The runner also dispatches `state.get`, `state.set` and `telco-x.call`,
-//! none of which are below. Packs using them cannot be built today. They are
-//! deliberately left out rather than fixed blind — each needs the same hazard
-//! check `mcp` got (see [`BUILTIN_EXACT_KINDS`]) before it is trusted to the
-//! prefix rule.
+//! The runner keeps TWO lists and they are not the same. `NATIVE_OP_KEYS`
+//! (`runner/flow_adapter.rs`) governs loading a RAW `.ygtc`; a BUILT pack
+//! reaches the engine through the compiled manifest, where `HostNode::from`
+//! applies its own `is_builtin` prefix allowlist (`runner/engine.rs`). Only the
+//! second one describes what a pack this crate produces will actually do.
+//! Reasoning from `NATIVE_OP_KEYS` alone yields a confidently wrong answer —
+//! it lists keys the compiled path still cannot dispatch.
 //!
-//! `var.set` used to be listed here as blocked on the runner. It is not: the
-//! runner's `NATIVE_OP_KEYS` governs loading a raw `.ygtc`, whereas a built pack
-//! reaches the engine through the compiled manifest, where `is_builtin` already
-//! carries a `"var."` prefix and a `"var.set"` arm writes `state.vars`. It is in
-//! [`BUILTIN_EXACT_KINDS`] below.
+//! What makes the difference is that `is_builtin` decides whether a dotted
+//! `component.id` is kept intact or split into `<component>.<operation>`. A key
+//! that is split never reaches its own match arm, and the resulting prefix
+//! (`"state"`, `"approval"`) is by construction never a key in the pack's
+//! component map. That is the bug `approval.` and `var.` were added to
+//! `is_builtin` to fix.
 //!
-//! Whoever closes that gap: read the runner, and check every addition against the
-//! `mcp.exec` hazard documented on [`BUILTIN_EXACT_KINDS`] before trusting the
-//! prefix rule.
+//! # `state.get` / `state.set` are deliberately NOT here
+//!
+//! The runner has a native arm for both (`NodeKind::BuiltinStateGet` /
+//! `BuiltinStateSet`, run by `execute_state_get`/`execute_state_set`) and lists
+//! both in `NATIVE_OP_KEYS`. They are still absent below, for two independent
+//! reasons — either one alone is disqualifying.
+//!
+//! **`state.get` is a real pack component in this repo.** `examples/qa-demo`
+//! resolves it from `repo://io.3bridges.components.state@1.0.0`: digest-pinned in
+//! `pack.lock.json`, declared in `pack.yaml` as `required_capabilities:
+//! [state:get]`, and materialized with a wasm artifact by
+//! `packc/tests/run_examples_manifest.rs`. Listing it here would make
+//! `collect_flow_component_ids` skip it and silently drop that component from the
+//! built pack. This is the `mcp.exec` hazard landing on the op-key ITSELF rather
+//! than on a `.suffix`, so no placement is safe — `state`, a `state.` prefix and
+//! an exact `state.get` all swallow it. `state.set` shares that component family
+//! and its `state:` capability namespace, so it stays out alongside `state.get`
+//! rather than being split off on the accident that no `state.set` component
+//! exists yet.
+//!
+//! **The runner cannot dispatch either from a built pack today.**
+//! `BuiltinStateGet`/`BuiltinStateSet` are unit variants: they read key/value out
+//! of the payload and take nothing from `component.operation`, so a packc-emitted
+//! state node always carries `operation: None`. The engine's `is_builtin` has no
+//! `state.` arm, so that id is dot-split into component `"state"` + operation
+//! `"get"` and dispatch fails with `component 'state' not found in pack`. Adding
+//! these keys here would trade a loud build failure for a loud dispatch failure
+//! without making one flow work.
+//!
+//! Closing this needs a `state.` arm in the runner's `is_builtin` FIRST, and then
+//! a ruling on a genuine cross-repo contradiction: greentic-designer's
+//! `catalog.baseline.yaml` calls `state.get` native (`component_ref: null`) while
+//! `examples/qa-demo` resolves it as a component. One of the two is wrong, and
+//! whichever way it goes, qa-demo's `pack.yaml`, `pack.lock.json`, both resolve
+//! sidecars and `run_examples_manifest.rs` move in the same change.
+//!
+//! `var.set` used to be listed as blocked on the runner. It was not, for the
+//! reason in "Read the right runner list" above: the compiled path already
+//! carries a `"var."` prefix in `is_builtin` and a `"var.set"` arm that writes
+//! `state.vars`. It is in [`BUILTIN_EXACT_KINDS`] below.
+//!
+//! Whoever extends this list: read the runner's `is_builtin`, not just
+//! `NATIVE_OP_KEYS`, and check every addition against the `mcp.exec` hazard
+//! documented on [`BUILTIN_EXACT_KINDS`] before trusting the prefix rule.
 
 use greentic_types::Node;
 
@@ -68,7 +111,22 @@ const BUILTIN_KINDS: &[&str] = &[
 /// either — while a prefix entry would capture any future `var.set.*`
 /// component. greentic-designer's Set Variable palette node emits exactly this
 /// op-key, and every flow using it was unbuildable.
-const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set"];
+///
+/// `telco-x.call` is the runner's remote-dispatch node for the `"telco-x"`
+/// runtime (`NodeKind::TelcoXCall` → `execute_telco_x_call` →
+/// `execute_remote_dispatch`), the same family as `sorla.call` / `operala.call` /
+/// `agentic.call` in [`BUILTIN_KINDS`]. Unlike the state kinds it takes its
+/// `target` FROM `component.operation`, so its nodes carry an operation, which is
+/// what keeps the engine from dot-splitting the id — its match arm is reachable
+/// from a compiled manifest even though `is_builtin` has no `telco-x.` prefix.
+/// Nothing in greentic-pack, greentic-designer or greentic-runner ships a
+/// component id starting with `telco-x`; the designer's own
+/// `catalog.baseline.yaml` marks the capability `dispatch: true` with no
+/// `component_ref` at all. It is exact-match anyway, because greentic-flow's
+/// `classify_node_type` reads a 2-segment key as a builtin but a 3+-segment one
+/// as an adapter component — so a `telco-x.call.*` id is precisely the shape a
+/// prefix entry would misclassify and drop.
+const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set", "telco-x.call"];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
 /// no pack component to resolve). Accepts both the bare kind (`dw.agent`) and
@@ -170,6 +228,56 @@ mod tests {
     fn var_set_is_exact_match_only() {
         for id in ["var.set.custom", "var.setter", "var"] {
             assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
+    /// `telco-x.call` is engine-dispatched to the `"telco-x"` remote runtime, so
+    /// it needs no resolve or summary entry. Without this, every flow carrying a
+    /// telco-x node failed `build` with "missing resolve summary entries".
+    #[test]
+    fn bare_telco_x_call_is_builtin() {
+        assert!(is_builtin_component_id("telco-x.call"));
+    }
+
+    /// Exact-match only, for the same reason as `mcp` and `var.set`.
+    /// greentic-flow's `classify_node_type` reads a 3+-segment key as an adapter
+    /// component, so `telco-x.call.*` is exactly the shape a prefix entry would
+    /// reclassify as engine-dispatched and drop from the built pack. `telco-x`
+    /// alone is not a builtin either — the dispatch verb is the whole key.
+    #[test]
+    fn telco_x_call_is_exact_match_only() {
+        for id in ["telco-x.call.sms", "telco-x.caller", "telco-x", "telco"] {
+            assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
+    /// `state.get`/`state.set` must stay NON-builtin even though the runner has a
+    /// native arm for each and lists both in `NATIVE_OP_KEYS`.
+    ///
+    /// `state.get` is a REAL component here: `examples/qa-demo` resolves it from
+    /// `repo://io.3bridges.components.state@1.0.0`, digest-pinned in
+    /// `pack.lock.json` and declared in `pack.yaml` under
+    /// `required_capabilities: [state:get]`. Classifying it as a builtin makes
+    /// `collect_flow_component_ids` skip it and drops that component from the
+    /// built pack — silently, which is worse than the build failure someone will
+    /// be tempted to fix by adding it here. Unlike `mcp`/`mcp.exec` the collision
+    /// is on the op-key itself, so an exact entry is no safer than a prefix one.
+    /// `state.set` shares the same component family and capability namespace.
+    ///
+    /// The engine also cannot dispatch either from a compiled manifest today:
+    /// both `NodeKind`s are unit variants, so the node carries `operation: None`,
+    /// and with no `state.` arm in the engine's `is_builtin` the id is dot-split
+    /// into `"state"` — never a key in the pack's component map. See the module
+    /// doc; this needs a runner change first, not a change here.
+    #[test]
+    fn state_get_and_set_are_components_not_builtins() {
+        for id in ["state.get", "state.set", "state", "state.getter"] {
+            assert!(
+                !is_builtin_component_id(id),
+                "{id} must NOT be builtin — `state.*` is a resolvable component \
+                 family (examples/qa-demo), and classifying it here drops the \
+                 component from the built pack"
+            );
         }
     }
 
