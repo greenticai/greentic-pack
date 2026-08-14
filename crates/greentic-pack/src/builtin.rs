@@ -126,7 +126,26 @@ const BUILTIN_KINDS: &[&str] = &[
 /// `classify_node_type` reads a 2-segment key as a builtin but a 3+-segment one
 /// as an adapter component — so a `telco-x.call.*` id is precisely the shape a
 /// prefix entry would misclassify and drop.
-const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set", "telco-x.call"];
+/// `flow.goto` is the runner's hand-over node (`NodeKind::FlowGoto` →
+/// `NodeControl::Jump`), the counterpart to `flow.call` in [`BUILTIN_KINDS`]
+/// above: a call awaits its target and fails on one that parks, a goto
+/// transfers the turn to exactly such a target and does not come back. It is
+/// engine-dispatched, so there is no pack component to resolve, and without an
+/// entry here every flow containing one fails to build with `missing resolve
+/// summary entries` — which is why greentic-designer currently ships the node
+/// hidden from both its palette and its builder.
+///
+/// Exact-match rather than a [`BUILTIN_KINDS`] prefix entry, for the same
+/// reason as `telco-x.call`: greentic-flow's `classify_node_type` reads a
+/// 2-segment key as a builtin but a 3+-segment one as an adapter component, so
+/// a `flow.goto.*` id is precisely the shape a prefix entry would misclassify
+/// and silently drop from the built pack. The designer emits the bare key with
+/// its target in a nested payload (`flow.goto: { flow_id, node?, input? }`),
+/// never a dotted suffix, so equality is sufficient as well as safer.
+///
+/// Note the deliberate asymmetry with its own sibling `flow.call`, whose prefix
+/// entry predates that hazard being understood, and is not a precedent to copy.
+const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set", "telco-x.call", "flow.goto"];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
 /// no pack component to resolve). Accepts both the bare kind (`dw.agent`) and
@@ -247,6 +266,25 @@ mod tests {
     #[test]
     fn telco_x_call_is_exact_match_only() {
         for id in ["telco-x.call.sms", "telco-x.caller", "telco-x", "telco"] {
+            assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
+    /// The bare hand-over key is engine-dispatched, so it must resolve to no
+    /// pack component.
+    #[test]
+    fn bare_flow_goto_is_builtin() {
+        assert!(is_builtin_component_id("flow.goto"));
+    }
+
+    /// Exact-match only, for the same reason as `mcp`, `var.set` and
+    /// `telco-x.call`: greentic-flow's `classify_node_type` reads a 3+-segment
+    /// key as an adapter component, so `flow.goto.*` is exactly the shape a
+    /// prefix entry would reclassify as engine-dispatched and silently drop
+    /// from the built pack.
+    #[test]
+    fn flow_goto_is_exact_match_only() {
+        for id in ["flow.goto.support", "flow.gotoer", "flow"] {
             assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
         }
     }
