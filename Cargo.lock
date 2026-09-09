@@ -2183,9 +2183,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types-macros"
-version = "1.1.0-dev.28349771865"
+version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdc2d2294cfbb6bc9e3ea254e3be888c717260644367cd82563c7e8bf1990508"
+checksum = "0130d63b0b087c5e160fa61ec01c01fbb6c6943ce08e6c3b1949249bb3f216d1"
 dependencies = [
  "proc-macro2",
  "quote",
