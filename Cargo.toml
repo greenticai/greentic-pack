@@ -120,7 +120,7 @@ features = [
 version = "=1.3.0-research.2"
 
 [workspace.dependencies.greentic-flow]
-version = "=1.3.0-research.3"
+version = "=1.3.0-research.4"
 
 [workspace.dependencies.greentic-interfaces-host]
 version = "=1.3.0-research.2"
@@ -185,3 +185,10 @@ features = [
 
 # NOTE: This patch stays in the commit so packc can resolve ext:// with the
 # local greentic-flow that declares the Ext arm in resolve_summary. The
+
+# greentic-flow 1.3.0-research.4 exists only in git: crates.io publishing has
+# been locked for the fleet since 2026-09-08. It carries the exact-match
+# runtime-native call kinds (operala.call & co. keep their component id under
+# schema v2). Move back to the registry once publishing is restored.
+[patch.crates-io]
+greentic-flow = { git = "https://github.com/greenticai/greentic-flow", rev = "dbfaa9528f4975ac6a3008fbecf245c154075612" }
