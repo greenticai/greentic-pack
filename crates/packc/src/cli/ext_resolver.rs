@@ -487,14 +487,15 @@ pub fn read_describe_from_gtxpack(extension_id: &str, zip_bytes: &[u8]) -> Resul
 /// - `sorla:<pack>`        — a deployed SoR's business action
 /// - `component:<ref>`     — an OCI component, resolved from the pack's components
 /// - `mcp:<server_id>`     — a tool on a per-tenant MCP server
+/// - `a2a:<agent_id>`      — an external A2A agent over HTTPS (greentic-aw-runtime `A2aToolSource`)
 ///
 /// Feeding one of these to [`lookup_ext_dependency`] asks for an extension that
 /// cannot exist, which fails the build outright — and for a pack with no
 /// extensions at all it fails on the missing `pack.extensions.json` before it
 /// can even report the real problem. Their secrets are not ours to collect:
-/// they are declared by the flow, the SoR, the component manifest, or the MCP
-/// server registration respectively.
-const NON_EXTENSION_TOOL_PREFIXES: [&str; 4] = ["flow:", "sorla:", "component:", "mcp:"];
+/// they are declared by the flow, the SoR, the component manifest, the MCP
+/// server registration, or the A2A agent registration respectively.
+const NON_EXTENSION_TOOL_PREFIXES: [&str; 5] = ["flow:", "sorla:", "component:", "mcp:", "a2a:"];
 
 /// Whether `ext_id` names a `.gtxpack` extension (as opposed to one of the
 /// run-time-resolved tool kinds in [`NON_EXTENSION_TOOL_PREFIXES`]).
@@ -782,6 +783,28 @@ mod non_extension_tool_ref_tests {
         assert!(!is_extension_tool_ref("sorla:my-pack"));
         assert!(!is_extension_tool_ref("component:oci://ghcr.io/x/y"));
         assert!(!is_extension_tool_ref("mcp:my-server"));
+        assert!(!is_extension_tool_ref("a2a:recipe"));
+    }
+
+    /// An agentic worker bound only to an external A2A agent aborted the build
+    /// with "resolve tool extension 'a2a:recipe'" — the same failure `flow:`
+    /// had, one tool kind later.
+    #[test]
+    fn a_worker_with_only_an_a2a_tool_needs_no_extensions_file() {
+        let agents = agent_with_tools(json!([
+            { "extension_id": "a2a:recipe", "tool_name": "ask" },
+        ]));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = resolve_agent_tool_requirements(dir.path(), &agents, dir.path(), true)
+            .expect("an a2a: tool ref must not require an extensions file");
+        assert!(
+            out.secret_requirements.is_empty(),
+            "an a2a: ref contributes no extension secret requirements"
+        );
+        assert!(
+            out.archives.is_empty(),
+            "an a2a: ref acquires no extension archive"
+        );
     }
 
     /// The regression this guards: a worker carrying only `flow:` tools used to
