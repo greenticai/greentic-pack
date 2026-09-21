@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.95"
-version = "1.3.0-research.12"
+version = "1.3.0-research.13"
 license = "MIT"
 
 [workspace.dependencies]
@@ -137,7 +137,7 @@ features = [
 [workspace.dependencies.greentic-pack]
 package = "greentic-pack-lib"
 path = "crates/greentic-pack"
-version = "=1.3.0-research.12"
+version = "=1.3.0-research.13"
 
 [workspace.dependencies.tokio]
 version = "1"
@@ -148,7 +148,7 @@ features = [
 ]
 
 [workspace.dependencies.pack_component_template]
-version = "=1.3.0-research.12"
+version = "=1.3.0-research.13"
 path = "crates/pack_component_template"
 
 [workspace.dependencies.rcgen]
