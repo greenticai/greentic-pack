@@ -1038,6 +1038,7 @@ fn convert_gpack_manifest(
         components,
         distribution: None,
         component_descriptors: Vec::new(),
+        extensions: None,
     }
 }
 

@@ -290,6 +290,7 @@ pub struct PackBuilder {
     provenance: Option<Provenance>,
     component_descriptors: Vec<ComponentDescriptor>,
     distribution: Option<DistributionSection>,
+    extensions: std::collections::BTreeMap<String, greentic_types::pack_manifest::ExtensionRef>,
 }
 
 #[derive(Clone)]
@@ -322,6 +323,9 @@ pub struct PackManifest {
     pub distribution: Option<DistributionSection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub component_descriptors: Vec<ComponentDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions:
+        Option<std::collections::BTreeMap<String, greentic_types::pack_manifest::ExtensionRef>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +419,7 @@ impl PackBuilder {
             assets: Vec::new(),
             signing: Signing::default(),
             provenance: None,
+            extensions: std::collections::BTreeMap::new(),
         }
     }
 
@@ -475,6 +480,35 @@ impl PackBuilder {
     pub fn with_distribution(mut self, distribution: DistributionSection) -> Self {
         self.distribution = Some(distribution);
         self
+    }
+
+    /// Attach a manifest extension entry under `key`.
+    pub fn with_extension(
+        mut self,
+        key: impl Into<String>,
+        ext: greentic_types::pack_manifest::ExtensionRef,
+    ) -> Self {
+        self.extensions.insert(key.into(), ext);
+        self
+    }
+
+    /// Attach an inline manifest extension carrying an arbitrary JSON payload.
+    pub fn with_inline_extension(
+        self,
+        key: impl Into<String>,
+        kind: &str,
+        version: &str,
+        payload: serde_json::Value,
+    ) -> Self {
+        use greentic_types::pack_manifest::{ExtensionInline, ExtensionRef};
+        let ext = ExtensionRef {
+            kind: kind.to_string(),
+            version: version.to_string(),
+            digest: None,
+            location: None,
+            inline: Some(ExtensionInline::Other(payload)),
+        };
+        self.with_extension(key, ext)
     }
 
     /// Returns every in-archive file keyed by archive path, in deterministic (sorted) order.
@@ -638,6 +672,11 @@ impl PackBuilder {
             components: component_entries,
             distribution,
             component_descriptors,
+            extensions: if self.extensions.is_empty() {
+                None
+            } else {
+                Some(self.extensions.clone())
+            },
         };
 
         let manifest_cbor = encode_manifest_cbor(&manifest_model)?;
@@ -1234,5 +1273,25 @@ mod tests {
         let mut sorted = keys.clone();
         sorted.sort();
         assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn with_inline_extension_lands_in_manifest_cbor() {
+        let builder = PackBuilder::new(sample_meta())
+            .with_signing(Signing::None)
+            .with_flow(sample_flow())
+            .with_inline_extension(
+                "greentic.triggers.v1",
+                "greentic.triggers.v1",
+                "1",
+                serde_json::json!({ "triggers": [ { "id": "t1", "schedule": { "kind": "every_minute" },
+                    "emits": "tenancy.tick", "payload_template": {} } ] }),
+            );
+        let entries = builder.entries().expect("entries");
+        let cbor = entries.get("manifest.cbor").expect("manifest.cbor");
+        let manifest: serde_json::Value = serde_cbor::from_slice(cbor).expect("decode");
+        let ext = &manifest["extensions"]["greentic.triggers.v1"];
+        assert_eq!(ext["kind"], "greentic.triggers.v1");
+        assert_eq!(ext["inline"]["triggers"][0]["id"], "t1");
     }
 }

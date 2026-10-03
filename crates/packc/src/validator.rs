@@ -937,6 +937,7 @@ mod tests {
                 flows: Vec::new(),
                 distribution: None,
                 component_descriptors: Vec::new(),
+                extensions: None,
             },
             report: greentic_pack::reader::VerifyReport::default(),
             gpack_manifest: None,

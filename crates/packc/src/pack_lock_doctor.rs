@@ -1193,6 +1193,7 @@ mod tests {
             components: Vec::new(),
             distribution: None,
             component_descriptors: Vec::new(),
+            extensions: None,
         };
         let mut load = PackLoad {
             manifest,
@@ -1276,6 +1277,7 @@ mod tests {
             components: Vec::new(),
             distribution: None,
             component_descriptors: Vec::new(),
+            extensions: None,
         };
         let load = PackLoad {
             manifest,
