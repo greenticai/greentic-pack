@@ -26,7 +26,12 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h
         fi
-        sudo apt-get update && sudo apt-get install -y lld clang
+        for attempt in 1 2 3; do
+          if timeout 300 sudo apt-get update && timeout 300 sudo apt-get install -y lld clang; then break; fi
+          if [ "$attempt" -eq 3 ]; then echo "apt-get failed after 3 attempts" >&2; exit 1; fi
+          echo "apt-get attempt $attempt failed or timed out; retrying in 15s" >&2
+          sleep 15
+        done
         mkdir -p .cargo
         cat > .cargo/config.toml <<'TOML'
         [target.x86_64-unknown-linux-gnu]
@@ -34,8 +39,27 @@ jobs:
         rustflags = ["-C", "link-arg=-fuse-ld=lld"]
         TOML
         rustup target add wasm32-wasip2
-        if [ ! -x "$HOME/.cargo/bin/cargo-binstall" ]; then
-          cargo install cargo-binstall --locked
+        if ! command -v cargo-binstall >/dev/null 2>&1; then
+          # Bootstrap from the prebuilt release binary: nothing is compiled, so a
+          # cargo-binstall dependency raising its MSRV above the pinned toolchain
+          # cannot break this step (cargo-binstall 1.22.0 did exactly that).
+          binstall_ok=0
+          for attempt in 1 2 3; do
+            # `curl | bash` would hide a download failure: the pipeline reports
+            # bash's status, and bash succeeds on empty input. Download, then run.
+            binstall_installer="$(mktemp)"
+            if curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh -o "$binstall_installer" && bash "$binstall_installer"; then
+              hash -r
+              if command -v cargo-binstall >/dev/null 2>&1; then binstall_ok=1; fi
+            fi
+            rm -f "$binstall_installer"
+            if [ "$binstall_ok" -eq 1 ]; then break; fi
+            sleep $((attempt * 5))
+          done
+          if [ "$binstall_ok" -ne 1 ]; then
+            # Last release whose bundled lockfile still builds on 1.95.0.
+            cargo install cargo-binstall --locked --version 1.21.1
+          fi
         fi
         BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
         BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force || cargo install greentic-component --locked --force
@@ -80,7 +104,12 @@ jobs:
             sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
             df -h
           fi
-          sudo apt-get update && sudo apt-get install -y lld clang
+          for attempt in 1 2 3; do
+            if timeout 300 sudo apt-get update && timeout 300 sudo apt-get install -y lld clang; then break; fi
+            if [ "$attempt" -eq 3 ]; then echo "apt-get failed after 3 attempts" >&2; exit 1; fi
+            echo "apt-get attempt $attempt failed or timed out; retrying in 15s" >&2
+            sleep 15
+          done
           mkdir -p .cargo
           cat > .cargo/config.toml <<'TOML'
           [target.x86_64-unknown-linux-gnu]
@@ -88,8 +117,27 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=lld"]
           TOML
           rustup target add wasm32-wasip2
-          if [ ! -x "$HOME/.cargo/bin/cargo-binstall" ]; then
-            cargo install cargo-binstall --locked
+          if ! command -v cargo-binstall >/dev/null 2>&1; then
+            # Bootstrap from the prebuilt release binary: nothing is compiled, so a
+            # cargo-binstall dependency raising its MSRV above the pinned toolchain
+            # cannot break this step (cargo-binstall 1.22.0 did exactly that).
+            binstall_ok=0
+            for attempt in 1 2 3; do
+              # `curl | bash` would hide a download failure: the pipeline reports
+              # bash's status, and bash succeeds on empty input. Download, then run.
+              binstall_installer="$(mktemp)"
+              if curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh -o "$binstall_installer" && bash "$binstall_installer"; then
+                hash -r
+                if command -v cargo-binstall >/dev/null 2>&1; then binstall_ok=1; fi
+              fi
+              rm -f "$binstall_installer"
+              if [ "$binstall_ok" -eq 1 ]; then break; fi
+              sleep $((attempt * 5))
+            done
+            if [ "$binstall_ok" -ne 1 ]; then
+              # Last release whose bundled lockfile still builds on 1.95.0.
+              cargo install cargo-binstall --locked --version 1.21.1
+            fi
           fi
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall cargo-component -y --force || cargo install cargo-component --locked --force
           BINSTALL_DISABLE_STRATEGIES=compile cargo binstall greentic-component -y --force || cargo install greentic-component --locked --force
@@ -195,8 +243,12 @@ jobs:
       - name: Install Linux toolchains
         if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y lld clang gcc-aarch64-linux-gnu
+          for attempt in 1 2 3; do
+            if timeout 300 sudo apt-get update && timeout 300 sudo apt-get install -y lld clang gcc-aarch64-linux-gnu; then break; fi
+            if [ "$attempt" -eq 3 ]; then echo "apt-get failed after 3 attempts" >&2; exit 1; fi
+            echo "apt-get attempt $attempt failed or timed out; retrying in 15s" >&2
+            sleep 15
+          done
       - name: Configure lld for native Linux x86_64 builds
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
