@@ -145,7 +145,7 @@ const BUILTIN_KINDS: &[&str] = &[
 ///
 /// Note the deliberate asymmetry with its own sibling `flow.call`, whose prefix
 /// entry predates that hazard being understood, and is not a precedent to copy.
-const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set", "telco-x.call", "flow.goto"];
+const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set", "telco-x.call", "flow.goto", "a2a"];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
 /// no pack component to resolve). Accepts both the bare kind (`dw.agent`) and
@@ -253,6 +253,26 @@ mod tests {
     /// `telco-x.call` is engine-dispatched to the `"telco-x"` remote runtime, so
     /// it needs no resolve or summary entry. Without this, every flow carrying a
     /// telco-x node failed `build` with "missing resolve summary entries".
+    /// `a2a` is the runner's "ask another agent" node (`a2a` is in
+    /// `flow_adapter::NATIVE_OP_KEYS`, executed by `runner/a2a_node.rs`). It is
+    /// engine-dispatched, so there is no pack component to resolve; without an
+    /// entry here every flow containing one fails `build` with "missing resolve
+    /// summary entries for nodes <id>" (reproduced with greentic-pack
+    /// 1.2.37754951766).
+    #[test]
+    fn bare_a2a_is_builtin() {
+        assert!(is_builtin_component_id("a2a"));
+    }
+
+    /// Exact-match only, like `mcp` and `flow.goto`: a prefix entry would
+    /// capture an `a2a.*` component and silently drop it from the pack.
+    #[test]
+    fn a2a_is_exact_match_only() {
+        for id in ["a2a.custom", "a2a.call", "a2aa", "a2"] {
+            assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
     #[test]
     fn bare_telco_x_call_is_builtin() {
         assert!(is_builtin_component_id("telco-x.call"));
