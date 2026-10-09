@@ -1,6 +1,6 @@
 [package]
 name = "noop-component-v06"
-version = "1.2.0-dev.0"
+version = "1.2.0"
 edition = "2024"
 license = "MIT"
 
@@ -10,7 +10,7 @@ crate-type = [
 ]
 
 [dependencies.greentic-interfaces-guest]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 default-features = false
 features = [
     "component-v0-6",

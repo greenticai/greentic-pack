@@ -107,7 +107,7 @@ assert_cmd = { workspace = true }
 indoc = { workspace = true }
 tempfile = { workspace = true }
 predicates = { workspace = true }
-greentic-llm = ">=1.2.0-dev, <1.3.0-0"
+greentic-llm = ">=1.2.0-0, <1.3.0-0"
 
 [build-dependencies]
 # Keep Wasmtime build-dependency features aligned with transitive Greentic

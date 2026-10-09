@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.95"
-version = "1.2.0-dev.0"
+version = "1.2.0"
 license = "MIT"
 
 [workspace.dependencies]
@@ -33,10 +33,10 @@ base64 = "0.22"
 ignore = "0.4"
 toml = "1"
 tracing = "0.1"
-greentic-config-types = ">=1.2.0-dev, <1.3.0-0"
-greentic-qa-lib = ">=1.2.0-dev, <1.3.0-0"
-greentic-i18n-lib = ">=1.2.0-dev, <1.3.0-0"
-greentic-config = ">=1.2.0-dev, <1.3.0-0"
+greentic-config-types = ">=1.2.0-0, <1.3.0-0"
+greentic-qa-lib = ">=1.2.0-0, <1.3.0-0"
+greentic-i18n-lib = ">=1.2.0-0, <1.3.0-0"
+greentic-config = ">=1.2.0-0, <1.3.0-0"
 tempfile = "3"
 rand_core = "0.10"
 getrandom = "0.4"
@@ -117,22 +117,22 @@ features = [
 ]
 
 [workspace.dependencies.greentic-types]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 
 [workspace.dependencies.greentic-flow]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 
 [workspace.dependencies.greentic-interfaces-host]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 
 [workspace.dependencies.greentic-interfaces-wasmtime]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 
 [workspace.dependencies.greentic-telemetry]
 # On the 1.2.0-dev lane with the rest of the chain: greentic-types 1.2.0-dev
 # requires telemetry `>=1.2.0-dev`, and a stable `>=1.1.0` range cannot admit
 # a pre-release of a lower M.m.p, so the two cannot share a graph.
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 features = [
     "otlp",
 ]
@@ -140,7 +140,7 @@ features = [
 [workspace.dependencies.greentic-pack]
 package = "greentic-pack-lib"
 path = "crates/greentic-pack"
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 
 [workspace.dependencies.tokio]
 version = "1"
@@ -151,7 +151,7 @@ features = [
 ]
 
 [workspace.dependencies.pack_component_template]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 path = "crates/pack_component_template"
 
 [workspace.dependencies.rcgen]
@@ -171,7 +171,7 @@ features = [
 ]
 
 [workspace.dependencies.greentic-distributor-client]
-version = ">=1.2.0-dev, <1.3.0-0"
+version = ">=1.2.0-0, <1.3.0-0"
 default-features = false
 features = [
     "reqwest",

@@ -1,6 +1,6 @@
 [package]
 name = "router-echo"
-version = "1.2.0-dev.0"
+version = "1.2.0"
 edition = "2024"
 
 [dependencies]
