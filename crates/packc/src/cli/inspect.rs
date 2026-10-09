@@ -1,15 +1,19 @@
 #![forbid(unsafe_code)]
 
-use std::io::Write;
 use std::{
     collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
+use greentic_pack::archive_shape::{
+    CANONICAL_MANIFEST_ENTRY, DW_MANIFEST_ENTRY, PackArchiveShape, archive_shape_is_ambiguous,
+    detect_archive_shape,
+};
+use greentic_pack::reader::read_pack_archive;
 use greentic_pack::static_routes::{StaticRouteV1, parse_static_routes_extension};
 use greentic_pack::validate::{
     ComponentReferencesExistValidator, OauthCapabilityRequirementsValidator,
@@ -33,6 +37,8 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 use crate::build;
+use crate::cli::doctor_dw::{DwPackReport, check_dw_pack};
+use crate::cli::flow_doctor::{FlowDoctorOutcome, json_diagnostic_data, run_flow_doctor};
 use crate::extension_refs::{
     default_extensions_file_path, default_extensions_lock_file_path, read_extensions_file,
     read_extensions_lock_file, validate_extensions_lock_alignment,
@@ -140,6 +146,38 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
         args.validate
     };
 
+    // Archives come in more than one shape, and only the canonical one can be
+    // loaded as a `PackLoad`. Derive the shape from the archive's own entry
+    // names before trying to decode anything, so a healthy pack of another
+    // shape is named rather than reported as a missing file.
+    let mut shape_notes: Vec<String> = Vec::new();
+    let shape = match &mode {
+        InspectMode::Archive(path) => {
+            let entries = read_pack_archive(path)
+                .with_context(|| format!("failed to open pack {}", path.display()))?;
+            let entry_names = entries.entry_names();
+            let shape = detect_archive_shape(&entry_names);
+            if archive_shape_is_ambiguous(&entry_names) {
+                shape_notes.push(format!(
+                    "archive contains both `{CANONICAL_MANIFEST_ENTRY}` and `{DW_MANIFEST_ENTRY}`; \
+                     treating it as a canonical pack (`{CANONICAL_MANIFEST_ENTRY}` wins) — \
+                     a pack should carry exactly one manifest, so this is a producer bug"
+                ));
+            }
+            match shape {
+                PackArchiveShape::DwAnswerDoc => {
+                    return handle_dw_pack(path, &entries.files, &args, format);
+                }
+                PackArchiveShape::Unrecognised => {
+                    bail!(unrecognised_archive_message(path, &entry_names));
+                }
+                PackArchiveShape::Canonical => shape,
+            }
+        }
+        // A source directory is always built into a canonical pack first.
+        InspectMode::Source(_) => PackArchiveShape::Canonical,
+    };
+
     let load = match &mode {
         InspectMode::Archive(path) => inspect_pack_file(path)?,
         InspectMode::Source(path) => inspect_source_dir(path, runtime, args.allow_oci_tags).await?,
@@ -194,6 +232,8 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
     match format {
         InspectFormat::Json => {
             let mut payload = serde_json::json!({
+                "archive_shape": shape.as_slug(),
+                "shape_notes": shape_notes,
                 "manifest": load.manifest,
                 "report": {
                     "signature_ok": load.report.signature_ok,
@@ -209,7 +249,7 @@ pub async fn handle(args: InspectArgs, json: bool, runtime: &RuntimeContext) -> 
             println!("{}", to_sorted_json(payload)?);
         }
         InspectFormat::Human => {
-            print_human(&load, validation.as_ref());
+            print_human(&load, validation.as_ref(), shape, &shape_notes);
         }
     }
 
@@ -274,77 +314,40 @@ fn run_flow_doctors(
             continue;
         };
 
-        let flow_bin = crate::external_tools::resolve("greentic-flow")
-            .unwrap_or_else(|| PathBuf::from("greentic-flow"));
-        let mut command = Command::new(&flow_bin);
-        command
-            .args(["doctor", "--json", "--stdin"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+        match run_flow_doctor(bytes)? {
+            FlowDoctorOutcome::Ok => {}
+            FlowDoctorOutcome::Failed { data } => {
+                has_errors = true;
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "PACK_FLOW_DOCTOR_FAILED".to_string(),
+                    message: "flow doctor failed".to_string(),
+                    path: Some(flow.file_yaml.clone()),
+                    hint: Some("run `greentic-flow doctor` for details".to_string()),
+                    data,
+                });
+            }
+            // The cause applies to every flow, not just this one — report once
+            // and stop asking.
+            FlowDoctorOutcome::Unavailable {
+                message,
+                hint,
+                data,
+            } => {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warn,
                     code: "PACK_FLOW_DOCTOR_UNAVAILABLE".to_string(),
-                    message: "greentic-flow not available; skipping flow doctor checks".to_string(),
+                    message: message.to_string(),
                     path: None,
-                    hint: Some("install greentic-flow or pass --no-flow-doctor".to_string()),
-                    data: Value::Null,
+                    hint: Some(hint.to_string()),
+                    data,
                 });
                 return Ok(false);
             }
-            Err(err) => {
-                return Err(err).with_context(|| format!("run {} doctor", flow_bin.display()));
-            }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(bytes)
-                .context("write flow content to greentic-flow stdin")?;
-        }
-        let output = child
-            .wait_with_output()
-            .context("wait for greentic-flow doctor")?;
-
-        if !output.status.success() {
-            if flow_doctor_unsupported(&output) {
-                diagnostics.push(Diagnostic {
-                    severity: Severity::Warn,
-                    code: "PACK_FLOW_DOCTOR_UNAVAILABLE".to_string(),
-                    message: "greentic-flow does not support --stdin; skipping flow doctor checks"
-                        .to_string(),
-                    path: None,
-                    hint: Some("update greentic-flow or pass --no-flow-doctor".to_string()),
-                    data: json_diagnostic_data(&output),
-                });
-                return Ok(false);
-            }
-            has_errors = true;
-            diagnostics.push(Diagnostic {
-                severity: Severity::Error,
-                code: "PACK_FLOW_DOCTOR_FAILED".to_string(),
-                message: "flow doctor failed".to_string(),
-                path: Some(flow.file_yaml.clone()),
-                hint: Some("run `greentic-flow doctor` for details".to_string()),
-                data: json_diagnostic_data(&output),
-            });
         }
     }
 
     Ok(has_errors)
-}
-
-fn flow_doctor_unsupported(output: &std::process::Output) -> bool {
-    let mut combined = String::new();
-    combined.push_str(&String::from_utf8_lossy(&output.stdout));
-    combined.push_str(&String::from_utf8_lossy(&output.stderr));
-    let combined = combined.to_lowercase();
-    combined.contains("--stdin") && combined.contains("unknown")
-        || combined.contains("found argument '--stdin'")
-        || combined.contains("unexpected argument '--stdin'")
-        || combined.contains("unrecognized option '--stdin'")
 }
 
 fn run_component_doctors(load: &PackLoad, diagnostics: &mut Vec<Diagnostic>) -> Result<bool> {
@@ -477,14 +480,6 @@ fn run_component_doctors(load: &PackLoad, diagnostics: &mut Vec<Diagnostic>) -> 
     }
 
     Ok(has_errors)
-}
-
-fn json_diagnostic_data(output: &std::process::Output) -> Value {
-    serde_json::json!({
-        "status": output.status.code(),
-        "stdout": String::from_utf8_lossy(&output.stdout).trim_end(),
-        "stderr": String::from_utf8_lossy(&output.stderr).trim_end(),
-    })
 }
 
 fn component_manifest_missing_diag(manifest_file: &Option<String>) -> Diagnostic {
@@ -672,7 +667,20 @@ async fn inspect_source_dir(
     inspect_pack_file(&gtpack_out)
 }
 
-fn print_human(load: &PackLoad, validation: Option<&ValidationOutput>) {
+fn print_human(
+    load: &PackLoad,
+    validation: Option<&ValidationOutput>,
+    shape: PackArchiveShape,
+    shape_notes: &[String],
+) {
+    println!(
+        "Pack shape: {}{}",
+        shape.describe(),
+        canonical_dw_sidecar_note(load)
+    );
+    for note in shape_notes {
+        println!("warning: {note}");
+    }
     let manifest = &load.manifest;
     let report = &load.report;
     println!(
@@ -1230,11 +1238,216 @@ fn format_component_artifact(artifact: &ArtifactLocationV1) -> String {
     }
 }
 
+// --- pack shape awareness ---------------------------------------------------
+
+/// Sidecars that mark a *canonical* pack built from `kind: dw-application`.
+///
+/// This is the second producer of "Agentic Worker pack": `greentic-pack build`
+/// emits these alongside a normal `manifest.cbor`, so such a pack is canonical,
+/// not the designer's answer-doc shape. Naming them keeps the two apart at a
+/// glance.
+const PACKC_DW_SIDECARS: [&str; 2] = ["dw-agents.json", "secrets-policy.json"];
+
+fn canonical_dw_sidecar_note(load: &PackLoad) -> String {
+    let present: Vec<&str> = PACKC_DW_SIDECARS
+        .iter()
+        .copied()
+        .filter(|entry| load.files.contains_key(*entry))
+        .collect();
+    if present.is_empty() {
+        return String::new();
+    }
+    format!("; dw-application sidecars: {}", present.join(", "))
+}
+
+/// The replacement for `manifest.cbor missing from archive`.
+///
+/// Names every shape doctor knows and the entry that decides each, then lists
+/// what the archive actually holds, so the operator can reach the same verdict
+/// with `unzip -l`. The old message named one entry and implied it was the only
+/// possibility, which is how a healthy pack came to look corrupt.
+fn unrecognised_archive_message(
+    path: &Path,
+    entry_names: &std::collections::BTreeSet<String>,
+) -> String {
+    const SHOWN: usize = 8;
+
+    let mut top_level: Vec<String> = entry_names
+        .iter()
+        .map(|name| match name.split_once('/') {
+            Some((dir, _)) => format!("{dir}/"),
+            None => name.clone(),
+        })
+        .collect();
+    top_level.dedup();
+
+    let found = if top_level.is_empty() {
+        "  Top-level entries found: none — the archive is empty.".to_string()
+    } else if top_level.len() > SHOWN {
+        format!(
+            "  Top-level entries found ({} of {} shown): {}",
+            SHOWN,
+            top_level.len(),
+            top_level[..SHOWN].join(", ")
+        )
+    } else {
+        format!("  Top-level entries found: {}", top_level.join(", "))
+    };
+
+    format!(
+        "unrecognised .gtpack shape: {}\n\n\
+         \x20 The archive opened as a valid ZIP but matches no pack shape doctor knows.\n\
+         \x20 doctor derives the shape from the archive's top-level entries, in this order:\n\n\
+         \x20   canonical pack      -> a top-level `{CANONICAL_MANIFEST_ENTRY}` entry\n\
+         \x20   DW application pack -> a top-level `{DW_MANIFEST_ENTRY}` entry (greentic-designer export)\n\n\
+         {found}\n\n\
+         \x20 If this should be a canonical pack, rebuild it: `greentic-pack build`.\n\
+         \x20 If this should be a designer export, re-export it — a DW application pack\n\
+         \x20 must carry a top-level `{DW_MANIFEST_ENTRY}`.",
+        path.display()
+    )
+}
+
+/// Report a DW application pack.
+///
+/// Deliberately does not run the canonical validators, the pack-lock doctor or
+/// the component doctor: none of the artefacts they read exist in this shape.
+fn handle_dw_pack(
+    path: &Path,
+    files: &HashMap<String, Vec<u8>>,
+    args: &InspectArgs,
+    format: InspectFormat,
+) -> Result<()> {
+    let validate_enabled = if args.no_validate {
+        false
+    } else {
+        args.validate
+    };
+    let report = if validate_enabled {
+        check_dw_pack(files, args.flow_doctor)
+    } else {
+        DwPackReport::default()
+    };
+
+    match format {
+        InspectFormat::Json => {
+            let payload = serde_json::json!({
+                "archive_shape": PackArchiveShape::DwAnswerDoc.as_slug(),
+                "pack": {
+                    "pack_id": report.pack_id,
+                    "manifest_id": report.manifest_id,
+                    "display_name": report.display_name,
+                    "tenant": report.tenant,
+                    "locale": report.locale,
+                    "executing_flow": report.executing_flow,
+                },
+                "validation": {
+                    "diagnostics": report.diagnostics,
+                    "has_errors": report.has_errors(),
+                },
+            });
+            println!("{}", to_sorted_json(payload)?);
+        }
+        InspectFormat::Human => print_dw_human(path, &report, validate_enabled, args.flow_doctor),
+    }
+
+    if validate_enabled && report.has_errors() {
+        bail!("pack validation failed");
+    }
+    Ok(())
+}
+
+fn print_dw_human(path: &Path, report: &DwPackReport, validate_enabled: bool, flow_doctor: bool) {
+    println!("Pack shape: {}", PackArchiveShape::DwAnswerDoc.describe());
+    println!("File: {}", path.display());
+    if let Some(pack_id) = &report.pack_id {
+        println!("Pack: {pack_id}");
+    }
+    if let Some(manifest_id) = &report.manifest_id {
+        println!("Manifest id: {manifest_id}");
+    }
+    if let Some(display_name) = &report.display_name {
+        println!("Display name: {display_name}");
+    }
+    if let Some(tenant) = &report.tenant {
+        println!("Tenant: {tenant}");
+    }
+    if let Some(locale) = &report.locale {
+        println!("Locale: {locale}");
+    }
+    match &report.executing_flow {
+        Some(flow) => println!("Executing flow: {flow}"),
+        None => println!("Executing flow: none"),
+    }
+    if report.knowledge.is_empty() {
+        println!("Knowledge: none");
+    } else {
+        for summary in &report.knowledge {
+            println!(
+                "Knowledge: {} ({}, {} asset(s))",
+                summary.sidecar,
+                summary.strategy.as_deref().unwrap_or("unknown strategy"),
+                summary.asset_count
+            );
+        }
+    }
+
+    if !validate_enabled {
+        println!("\nValidation disabled (--no-validate).");
+        return;
+    }
+
+    let mut checked = vec![
+        "manifest.json schema",
+        "metadata.json",
+        "declared kind",
+        "knowledge sidecar asset references",
+        "archive entry paths",
+    ];
+    // Only claim the flow was checked when there was one and checking was on —
+    // an over-broad "Checked:" line is its own kind of misleading report.
+    if report.executing_flow.is_some() && flow_doctor {
+        checked.insert(3, "flows/main.ygtc (greentic-flow doctor)");
+    }
+    println!("\nChecked: {}", checked.join(", "));
+    println!(
+        "Not checked (not part of this pack shape): SBOM, signature, component lock, \
+         component manifests, static routes"
+    );
+
+    if report.diagnostics.is_empty() {
+        println!("\nOK: no problems found.");
+        return;
+    }
+    println!("\nDiagnostics:");
+    for diagnostic in &report.diagnostics {
+        let severity = match diagnostic.severity {
+            Severity::Error => "error",
+            Severity::Warn => "warn",
+            Severity::Info => "info",
+        };
+        let location = diagnostic
+            .path
+            .as_deref()
+            .map(|path| format!(" [{path}]"))
+            .unwrap_or_default();
+        println!(
+            "  {severity}: {} ({}){location}",
+            diagnostic.message, diagnostic.code
+        );
+        if let Some(hint) = &diagnostic.hint {
+            println!("    hint: {hint}");
+        }
+    }
+    if !report.has_errors() {
+        println!("\nOK: no errors (warnings and notes above are not fatal).");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::os::unix::process::ExitStatusExt;
     use std::path::PathBuf;
 
     fn sample_args() -> InspectArgs {
@@ -1280,17 +1493,6 @@ mod tests {
             nested_a < nested_b,
             "nested keys should be sorted: {sorted}"
         );
-    }
-
-    #[test]
-    fn flow_doctor_unsupported_detects_common_cli_errors() {
-        let output = std::process::Output {
-            status: std::process::ExitStatus::from_raw(256),
-            stdout: Vec::new(),
-            stderr: b"error: unexpected argument '--stdin' found".to_vec(),
-        };
-
-        assert!(flow_doctor_unsupported(&output));
     }
 
     #[test]

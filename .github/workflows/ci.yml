@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch: {}
 
 permissions:
@@ -68,6 +68,23 @@ jobs:
 
   semver-checks:
     name: Semver Checks
+    # Stable lane only. This job compares the workspace against the previous
+    # STABLE release tag on its own major.minor line, and that baseline only
+    # exists on `main`. On `develop` the workspace sits at 1.2.0-dev.0 and the
+    # 1.2 line is pre-release-only — `git tag -l 'v1.2.*'` yields nothing but
+    # dev-lane run-id tags plus `v1.2.0-research.4`, which the resolver's
+    # `patch <= 999` stable-filter misreads as a release (its trailing
+    # component is "4"). semver-checks then tries to build that research tag
+    # as the baseline and dies with:
+    #   error: aborting due to failure to run 'cargo update' for crate
+    #          greentic-pack v1.2.0-research.4
+    # Removing the filter fault would not help: there is no stable v1.2.N tag
+    # to fall back to, so the resolver would exit 1 on "no same-line baseline"
+    # instead. The job is structurally inapplicable to the pre-release lane
+    # until 1.2 GAs, so scope it to main rather than leaving every develop PR
+    # permanently red (which would also stop nightly-cargo-lock-sync merging
+    # this repo's lock PRs, since it refuses any PR with a red rollup).
+    if: github.event_name != 'pull_request' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read

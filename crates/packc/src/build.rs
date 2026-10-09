@@ -13,7 +13,7 @@ use crate::extensions::{
 };
 use crate::flow_resolve::load_flow_resolve_summary;
 use crate::runtime::{NetworkPolicy, RuntimeContext};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use greentic_distributor_client::{DistClient, DistOptions};
 use greentic_flow::add_step::normalize::normalize_node_map;
 use greentic_flow::compile_ygtc_file;
@@ -326,12 +326,22 @@ pub async fn run(opts: &BuildOptions) -> Result<()> {
 
             let cache_dir = opts.pack_dir.join(".packc");
             let offline = opts.runtime.network_policy() == NetworkPolicy::Offline;
-            let tool_reqs = crate::cli::ext_resolver::resolve_agent_tool_requirements(
+            let resolution = crate::cli::ext_resolver::resolve_agent_tool_requirements(
                 &opts.pack_dir,
                 &config.agents,
                 &cache_dir,
                 offline,
             )?;
+            let tool_reqs = resolution.secret_requirements;
+
+            // Carry every resolved tool extension into the pack. These are the
+            // same archives whose describe.json produced `tool_reqs` above, so
+            // the pack cannot ask an operator for a tool's credential and then
+            // ship without the tool. An extension that could not be acquired
+            // has already failed the build inside
+            // `resolve_agent_tool_requirements` — deliberately fatal, matching
+            // this repo's existing treatment of an unreadable dependency.
+            build.extension_archives = resolution.archives;
 
             if let Some(generated) = crate::setup_gen::generate(
                 &config.pack_id,
@@ -418,6 +428,11 @@ struct BuildProducts {
     /// Sidecar files added verbatim to the gtpack archive; keyed by zip entry name.
     /// Populated only for `dw-application` packs (e.g. `dw-agents.json`).
     dw_sidecars: Vec<(String, Vec<u8>)>,
+    /// Tool extensions' `.gtxpack` archives, carried into the pack under
+    /// `extensions/`. Populated from the single resolution pass that also
+    /// produced the credential form, so declaring an extension and shipping it
+    /// stay one fact.
+    extension_archives: Vec<crate::cli::ext_resolver::ResolvedExtensionArchive>,
 }
 
 #[derive(Clone)]
@@ -517,6 +532,7 @@ fn assemble_manifest(
         assets,
         extra_files,
         dw_sidecars: Vec::new(),
+        extension_archives: Vec::new(),
     })
 }
 
@@ -1658,6 +1674,60 @@ fn package_gtpack(
         write_zip_entry(&mut writer, &logical, &bytes, options)?;
     }
 
+    // ---------------------------------------------------------------------
+    // CONTRACT — the in-pack extension layout, shared with greentic-runner.
+    //
+    // A `.gtpack` in a customer's hands cannot be renamed later, so this layout
+    // is fixed at the first release that emits it and is not ours alone to
+    // change. It is agreed with the consuming runner, and the same paragraph is
+    // recorded in greentic-designer's external-RAG design spec so the runner
+    // side inherits it from a document rather than by reading this code.
+    //
+    //   1. A tool extension's `.gtxpack` travels at `extensions/<name>.gtxpack`,
+    //      one flat level. There is no kind partition — NOT `extensions/design/`.
+    //   2. A consumer enumerates extensions by FILTERING ON THE `.gtxpack`
+    //      SUFFIX. It must not treat `extensions/` as homogeneous.
+    //   3. Rule 2 is load-bearing, not defensive: `extensions/` is ALREADY an
+    //      authoring convention in a pack source tree — the wizard writes
+    //      `extensions/*.json` manifest sidecars there and `collect_extra_files`
+    //      walks them into the archive verbatim. Those `.json` files are not
+    //      extensions and predate this feature.
+    //
+    // Why flat rather than kind-partitioned, even though a runner's own on-disk
+    // model is `<dir>/design/`: placing by kind would make packc read and trust
+    // `describe.json`'s `kind` to decide a path. A design extension is today the
+    // only kind ever declared as an agent-tool dependency, so that read buys a
+    // guess, not a guarantee — and a wrong guess is baked into shipped bytes.
+    // The consumer already opens each archive; it can classify from the inside,
+    // where the answer is authoritative.
+    // ---------------------------------------------------------------------
+    let mut extension_archives = build.extension_archives.clone();
+    extension_archives.sort_by(|a, b| a.entry_name.cmp(&b.entry_name));
+    for archive in extension_archives {
+        // LOAD-BEARING, not belt-and-braces. `extension_archive_entry_name`
+        // REDUCES collisions (disjoint verbatim/lossy namespaces plus a digest);
+        // it does not eliminate them, and this is the only thing that stops one
+        // extension silently shadowing another. Reachable without any hash
+        // collision at all: a source-tree file at `extensions/<id>.gtxpack` is
+        // carried by `map_extra_files` above and claims the entry first, since
+        // `is_reserved_extra_file` excludes `.gtpack` but not `.gtxpack`.
+        // Refuse, naming both sides — never skip.
+        if !written_paths.insert(archive.entry_name.clone()) {
+            bail!(
+                "extension '{}' cannot be carried at '{}': that entry is already claimed by another file in the pack",
+                archive.extension_id,
+                archive.entry_name
+            );
+        }
+        record_sbom_entry(
+            &mut sbom_entries,
+            &archive.entry_name,
+            &archive.bytes,
+            "application/zip",
+        );
+        write_zip_entry(&mut writer, &archive.entry_name, &archive.bytes, options)?;
+    }
+
     // Write dw-application sidecars (e.g. dw-agents.json) before finalising the SBOM.
     let mut dw_sidecars = build.dw_sidecars.clone();
     dw_sidecars.sort_by(|a, b| a.0.cmp(&b.0));
@@ -2790,6 +2860,7 @@ mod tests {
             assets: Vec::new(),
             extra_files: Vec::new(),
             dw_sidecars: Vec::new(),
+            extension_archives: Vec::new(),
         };
 
         let out = temp.path().join("demo.gtpack");
@@ -2858,6 +2929,7 @@ mod tests {
                 },
             ],
             dw_sidecars: Vec::new(),
+            extension_archives: Vec::new(),
         };
 
         let out = temp.path().join("prod.gtpack");
@@ -2919,6 +2991,7 @@ mod tests {
                 },
             ],
             dw_sidecars: Vec::new(),
+            extension_archives: Vec::new(),
         };
 
         let out = temp.path().join("conflict.gtpack");
@@ -2970,6 +3043,7 @@ mod tests {
                 source: root_asset,
             }],
             dw_sidecars: Vec::new(),
+            extension_archives: Vec::new(),
         };
 
         let out = temp.path().join("root-assets.gtpack");
@@ -3028,6 +3102,7 @@ mod tests {
                 source: secret_file,
             }],
             dw_sidecars: Vec::new(),
+            extension_archives: Vec::new(),
         };
 
         let out = temp.path().join("secrets.gtpack");

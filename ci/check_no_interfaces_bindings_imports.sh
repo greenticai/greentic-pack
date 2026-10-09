@@ -8,6 +8,7 @@ MATCHES="$(rg -n --hidden \
   --glob '!**/target/**' \
   --glob '!crates/vendor/**' \
   --glob '!**/*.lock' \
+  --glob '!**/*.md' \
   "$PATTERN" crates README.md docs examples 2>/dev/null || true)"
 
 if [[ -n "$MATCHES" ]]; then

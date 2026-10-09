@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
+use greentic_pack::archive_shape::{CANONICAL_MANIFEST_ENTRY, non_canonical_archive_message};
 use greentic_types::pack_manifest::{PackManifest, PackSignatures};
 use greentic_types::provider::{ProviderDecl, ProviderExtensionInline};
 use greentic_types::{PackId, PackKind, decode_pack_manifest};
@@ -221,8 +222,8 @@ fn read_manifest(path: &Path) -> Result<(PackManifest, HashSet<String>)> {
     }
 
     let mut manifest_entry = archive
-        .by_name("manifest.cbor")
-        .context("manifest.cbor missing from archive")?;
+        .by_name(CANONICAL_MANIFEST_ENTRY)
+        .with_context(|| non_canonical_archive_message(&entries.iter().cloned().collect()))?;
     let mut buf = Vec::new();
     manifest_entry.read_to_end(&mut buf)?;
     let manifest = match decode_pack_manifest(&buf) {

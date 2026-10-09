@@ -59,7 +59,10 @@ const TRANSLATABLE_FIELDS: &[&str] = &[
     "label",
     "altText",
     "errorMessage",
-    "value", // For TextBlock with value
+    // Display text on non-input elements only. An `Input.*` element's `value`
+    // is its default SUBMISSION, so it is never extracted — see
+    // `is_input_element`.
+    "value",
     "fallbackText",
     "speak",
 ];
@@ -152,7 +155,11 @@ fn extract_translatable_fields(
     skip_i18n_patterns: bool,
     strings: &mut Vec<ExtractedString>,
 ) {
+    let is_input = is_input_element(obj);
     for field in TRANSLATABLE_FIELDS {
+        if *field == "value" && is_input {
+            continue;
+        }
         if let Some(Value::String(text)) = obj.get(*field)
             && should_extract(text, skip_i18n_patterns)
         {
@@ -164,6 +171,25 @@ fn extract_translatable_fields(
             });
         }
     }
+}
+
+/// Whether `obj` is an Adaptive Card input (`Input.Text`, `Input.ChoiceSet`,
+/// `Input.Toggle`, ...).
+///
+/// An input's `value` is DATA: it is what the card submits when the user
+/// leaves the control untouched. Consumers rewrite every extracted path into
+/// an `{{i18n:KEY}}` marker, so extracting it lets a locale replace the
+/// default submission — an `Input.ChoiceSet` defaulting to `"Retail"` renders
+/// in Spanish as `"Comercio minorista"`, which matches none of its own
+/// choices, and a downstream tool rejects the submission. The same holds for
+/// a choice's `value` (never extracted, see `extract_choiceset`) and for
+/// `Input.Toggle`'s `valueOn` / `valueOff` (not in `TRANSLATABLE_FIELDS`).
+/// The input's display text — `label`, `placeholder`, `errorMessage`, a
+/// toggle's `title`, each choice's `title` — is still translated.
+fn is_input_element(obj: &serde_json::Map<String, Value>) -> bool {
+    obj.get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.starts_with("Input."))
 }
 
 fn extract_container_fields(
@@ -233,6 +259,8 @@ fn extract_choiceset(
     let Some(choices) = obj.get("choices").and_then(|v| v.as_array()) else {
         return;
     };
+    // Only a choice's `title` is display text; its `value` is what the input
+    // submits and must never be extracted.
     for (i, choice) in choices.iter().enumerate() {
         let choice_path = format!("{}_choices_{}", path, i);
         if let Some(choice_obj) = choice.as_object()
@@ -312,6 +340,9 @@ pub fn build_json_path(path: &str, field: &str) -> String {
 // ---------------------------------------------------------------------------
 // Tests — from extractor.rs
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod input_value_tests;
 
 #[cfg(test)]
 mod tests {

@@ -60,7 +60,7 @@ ci/local_check.sh
 
 ## Key Conventions
 
-- **Workspace version**: `1.1.0-dev.0` (dev lane). Dual-role binary crate — subject to binary bifurcation on dev publish (`greentic-pack` lib publishes as pre-release, binary publishes as `greentic-pack-dev`).
+- **Workspace version**: `1.2.0-dev.0` (dev lane). Dual-role binary crate — subject to binary bifurcation on dev publish (`greentic-pack` lib publishes as pre-release, binary publishes as `greentic-pack-dev`).
 - **WASM toolchain variant**: This repo targets `wasm32-wasip2` (see `rust-toolchain.toml`). Run `cargo check --target wasm32-wasip2` to validate WASM compilation alongside host checks.
 - `#![forbid(unsafe_code)]` — no unsafe code allowed.
 - Rust 2024 edition, pinned to rustc 1.95.0 (`rust-toolchain.toml`).
@@ -68,4 +68,29 @@ ci/local_check.sh
 - Prefer existing Greentic shared crates (interfaces, types, secrets, oauth, messaging, events) over re-defining types locally.
 - Error handling: `anyhow::Result<T>` with `.context()` for propagation; `thiserror` for domain-specific errors.
 - Tests use `tempfile::tempdir()` for isolation and `assert_cmd` for CLI integration tests.
-- Update `.codex/repo_overview.md` before and after PR work.
+- Update `.codex/repo_overview.md` before and after PR work. See also `.codex/global_rules.md` for Codex workflow conventions.
+
+## Gotchas
+
+- `examples/` contains workspace-excluded generated `pack_component` dirs (e.g. `examples/weather-demo/.packc/pack_component`, `examples/qa-demo/.packc/pack_component`); these are build artifacts, not source.
+- CI build and test steps use `--locked` (`cargo build --workspace --locked`, `cargo test --workspace --locked`); local edits that change dependency resolution require updating `Cargo.lock` first.
+- Dev-lane publish is dual-role bifurcated: the publish list is `greentic-pack-lib`, `pack_component`, `pack_component_template`, `greentic-pack`. The binary publishes as `greentic-pack-dev` on the dev lane; the library publishes as a pre-release under its canonical name.
+
+## CI Workflows (`.github/workflows/`)
+
+| File | Name | Triggers |
+|------|------|----------|
+| `branch-invariants.yml` | Branch Invariants | push, pull_request |
+| `ci.yml` | CI & Publish | workflow_call, push, pull_request |
+| `codeql.yml` | CodeQL | push, schedule |
+| `codex-security-fix.yml` | Codex Security Fix | schedule, workflow_dispatch |
+| `codex-semver-fix.yml` | Codex Semver Fix | schedule, workflow_dispatch |
+| `crates-publish.yml` | Publish to crates.io | push, workflow_dispatch |
+| `dependabot-automerge.yml` | Dependabot auto-merge | pull_request_target |
+| `dependency-review.yml` | Dependency Review | pull_request |
+| `dev-publish.yml` | Dev Publish | push, workflow_dispatch |
+| `nightly-coverage.yml` | Nightly Coverage | schedule, workflow_dispatch |
+| `notify-scheduled-failures.yml` | Notify scheduled failures | workflow_run |
+| `perf.yml` | Perf (lightweight) | schedule, workflow_dispatch |
+| `release-binaries.yml` | Release Binaries | push, workflow_dispatch |
+| `tag-on-version-bump.yml` | Tag on Version Bump | push |

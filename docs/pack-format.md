@@ -93,6 +93,58 @@ Supported `kind` values include:
 
 `rollout-strategy` remains reserved for future phases and must not be used.
 
+### Archive shapes
+
+`kind` above is a field *inside* a canonical manifest. Separately from it, a
+`.gtpack` file comes in one of two **archive shapes**, and they carry different
+schemas from different crates:
+
+| shape | deciding entry | manifest type | crate | producer |
+|---|---|---|---|---|
+| canonical | `manifest.cbor` | `PackManifest` | `greentic_types` | `greentic-pack build` |
+| DW application pack | `manifest.json` | `AnswerDocPackSpec` | local to greentic-designer | greentic-designer `write_gtpack` |
+
+These are **different schemas, not two encodings of one schema**. Re-encoding an
+`AnswerDocPackSpec` as CBOR and naming it `manifest.cbor` is therefore not a
+migration: the reader would find the entry and then fail to decode it as a
+`PackManifest`, turning a clear "this is another shape" into a misleading
+"this file is malformed".
+
+A DW application pack carries:
+
+```
+manifest.json              # AnswerDocPackSpec (pretty-printed JSON)
+metadata.json              # pack_id, kind, created_at, source
+knowledge_base.json        # optional, static-injection KB index
+knowledge_corpus.json      # optional, embedding-retrieval corpus index
+assets/knowledge/<slug>.txt  # optional, indexed by the sidecars above
+flows/main.ygtc            # optional, emitted only for an executing node
+```
+
+Note that an Agentic Worker pack built by `greentic-pack build` with
+`kind: dw-application` is a **canonical** archive: it has `manifest.cbor` plus
+`dw-agents.json` and `secrets-policy.json` sidecars. "Agentic Worker pack" alone
+is therefore ambiguous; the archive shape is what determines how a pack is read.
+
+#### How the shape is determined
+
+From the archive's own top-level entry names, never from a declared field:
+
+1. a top-level `manifest.cbor` entry -> canonical;
+2. otherwise a top-level `manifest.json` entry -> DW application pack;
+3. otherwise -> unrecognised, which is a hard failure.
+
+Matching is exact and top-level only — a nested `assets/i18n/_manifest.json` is
+an asset index, not a pack manifest.
+
+`metadata.json` carries a `kind` marker (`"DwApplication"`). It is **advisory**:
+`doctor` cross-checks it against the derived shape and reports a mismatch, but
+never uses it to decide the shape. A manifest field can drift out of sync with
+the zip it rides in; the zip's own contents cannot.
+
+If an archive somehow carries both manifests, `manifest.cbor` wins and `doctor`
+warns — a pack should carry exactly one manifest.
+
 ### Distribution bundles
 
 Use `kind: distribution-bundle` with a `distribution` section:
@@ -148,6 +200,8 @@ capabilities:
 ```
 
 At build time, author-declared entries union with the derived entries — author entries land first so their descriptions survive a collision.
+
+At deploy time the runtime's `BundleCapabilityGate` matches the exact `greentic.cap.fast2flow.v1` string and enables the routing pipeline. The pack may also ship a pre-seeded routing index at `assets/intent-index.json`; the runtime materializes it under the indexes path automatically, so no environment configuration is required for a local run. See [fast2flow / Opting In](https://docs.greentic.ai/components/fast2flow/#opting-in-from-a-pack).
 
 ## Verification Semantics
 

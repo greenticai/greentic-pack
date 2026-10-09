@@ -487,14 +487,15 @@ pub fn read_describe_from_gtxpack(extension_id: &str, zip_bytes: &[u8]) -> Resul
 /// - `sorla:<pack>`        — a deployed SoR's business action
 /// - `component:<ref>`     — an OCI component, resolved from the pack's components
 /// - `mcp:<server_id>`     — a tool on a per-tenant MCP server
+/// - `a2a:<agent_id>`      — an external A2A agent over HTTPS (greentic-aw-runtime `A2aToolSource`)
 ///
 /// Feeding one of these to [`lookup_ext_dependency`] asks for an extension that
 /// cannot exist, which fails the build outright — and for a pack with no
 /// extensions at all it fails on the missing `pack.extensions.json` before it
 /// can even report the real problem. Their secrets are not ours to collect:
-/// they are declared by the flow, the SoR, the component manifest, or the MCP
-/// server registration respectively.
-const NON_EXTENSION_TOOL_PREFIXES: [&str; 4] = ["flow:", "sorla:", "component:", "mcp:"];
+/// they are declared by the flow, the SoR, the component manifest, the MCP
+/// server registration, or the A2A agent registration respectively.
+const NON_EXTENSION_TOOL_PREFIXES: [&str; 5] = ["flow:", "sorla:", "component:", "mcp:", "a2a:"];
 
 /// Whether `ext_id` names a `.gtxpack` extension (as opposed to one of the
 /// run-time-resolved tool kinds in [`NON_EXTENSION_TOOL_PREFIXES`]).
@@ -504,15 +505,131 @@ fn is_extension_tool_ref(ext_id: &str) -> bool {
         .any(|prefix| ext_id.starts_with(prefix))
 }
 
+/// Directory prefix inside a built `.gtpack` under which a tool extension's
+/// `.gtxpack` archive travels.
+///
+/// The pack — not the deploy target's filesystem — carries the extension, so a
+/// runtime resolves a design extension from pack contents the same way
+/// `component_source_from_packs` and `mcp_source_from_packs` already resolve
+/// components and MCP routes. Nothing about the archive's presence depends on
+/// an environment variable or on a writable filesystem at the target.
+pub const EXTENSION_ARCHIVE_PREFIX: &str = "extensions/";
+
+/// Map an extension id to the ZIP entry name its `.gtxpack` travels under.
+///
+/// An extension id reaches this code from stored configuration, so it is
+/// sanitised rather than trusted: every character outside `[A-Za-z0-9._-]`
+/// becomes `_`, which removes every path separator (and therefore every way to
+/// escape the archive), and leading dots are stripped so the entry can be
+/// neither hidden nor a bare `.`/`..` path component.
+///
+/// Sanitisation is lossy, so whenever it changed anything the name also carries
+/// the first eight hex digits of `sha256(<raw id>)`, joined by [`LOSSY_MARKER`].
+///
+/// **The digest suffix reduces collisions; it does not eliminate them, and it is
+/// not what makes the layout safe.** The duplicate check in
+/// `build::package_gtpack` is load-bearing: it is the only thing that stops one
+/// extension shadowing another, and it must not be removed as redundant.
+///
+/// What the marker DOES guarantee is that the two branches occupy disjoint
+/// namespaces. `~` is outside the verbatim branch's `[A-Za-z0-9._-]`, so it is
+/// unreachable from a name this function emits verbatim, and a lossy name can
+/// therefore never equal a verbatim one. Without it the two branches overlapped
+/// constructibly rather than by digest collision: `sha256("a/b")[..8]` is
+/// `c14cddc0`, so `"a/b"` and the perfectly legal id `"a_b-c14cddc0"` both
+/// produced `extensions/a_b-c14cddc0.gtxpack`.
+///
+/// What remains uncovered, and is the duplicate check's job: two ids that
+/// sanitise alike AND share the first eight digest hex digits. That is a
+/// truncated-SHA-256 collision, and it fails the build loudly.
+pub fn extension_archive_entry_name(extension_id: &str) -> String {
+    let sanitized = sanitize_extension_id(extension_id);
+    if sanitized == extension_id && !sanitized.is_empty() {
+        return format!("{EXTENSION_ARCHIVE_PREFIX}{sanitized}.gtxpack");
+    }
+    let digest = hex::encode(Sha256::digest(extension_id.as_bytes()));
+    let suffix = &digest[..8];
+    let stem = if sanitized.is_empty() {
+        "ext"
+    } else {
+        sanitized.as_str()
+    };
+    format!("{EXTENSION_ARCHIVE_PREFIX}{stem}{LOSSY_MARKER}{suffix}.gtxpack")
+}
+
+/// Joins a lossily-sanitised stem to its digest suffix.
+///
+/// Deliberately a character [`sanitize_extension_id`] maps AWAY (it is not in
+/// `[A-Za-z0-9._-]`), so the verbatim branch can never emit one. That disjointness
+/// is the point — see [`extension_archive_entry_name`].
+const LOSSY_MARKER: char = '~';
+
+fn sanitize_extension_id(extension_id: &str) -> String {
+    let mapped: String = extension_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    mapped.trim_start_matches('.').to_string()
+}
+
+/// One tool extension's `.gtxpack`, acquired during the build so the produced
+/// `.gtpack` can carry it.
+#[derive(Clone)]
+pub struct ResolvedExtensionArchive {
+    /// Extension id exactly as declared in `pack.extensions.json`.
+    pub extension_id: String,
+    /// ZIP entry name inside the built `.gtpack`
+    /// (see [`extension_archive_entry_name`]).
+    pub entry_name: String,
+    /// The `.gtxpack` bytes, verbatim.
+    pub bytes: Vec<u8>,
+}
+
+/// Hand-written so `bytes` prints as a length rather than as its contents.
+/// A derived `Debug` would render a whole ZIP as a byte-array literal, so one
+/// `tracing::debug!(?resolution)` would put megabytes of binary into a log.
+impl std::fmt::Debug for ResolvedExtensionArchive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedExtensionArchive")
+            .field("extension_id", &self.extension_id)
+            .field("entry_name", &self.entry_name)
+            .field("bytes", &format_args!("{} bytes", self.bytes.len()))
+            .finish()
+    }
+}
+
+/// Everything one pass over the agents' tool extensions produces.
+///
+/// Declaring a dependency and shipping it must not become two sources of truth
+/// about which extensions a pack has, so the archives here are the very ones
+/// whose `describe.json` produced `secret_requirements` — not a second list
+/// re-derived from `pack.extensions.json`.
+#[derive(Debug, Default)]
+pub struct AgentToolResolution {
+    /// Per-extension secret requirements for the tools the agents actually use.
+    pub secret_requirements:
+        std::collections::BTreeMap<String, Vec<crate::setup_gen::ToolSecretReq>>,
+    /// The acquired `.gtxpack` archives, ordered by extension id.
+    pub archives: Vec<ResolvedExtensionArchive>,
+}
+
 /// For each tool extension used by the agents, acquire its `.gtxpack`, read
 /// `describe.json`, and extract the secret requirements of the used tools.
 ///
 /// Tools whose `extension_id` carries a non-extension scheme prefix are skipped
 /// (see [`NON_EXTENSION_TOOL_PREFIXES`]); everything else must resolve.
 ///
-/// Returns a map keyed by extension id. Errors (and propagates via `?`) when a
-/// declared tool extension is not found in `pack.extensions.json` or cannot be
-/// acquired — no silent skips.
+/// Errors (and propagates via `?`) when a declared tool extension is not found
+/// in `pack.extensions.json` or cannot be acquired — no silent skips. That
+/// failure mode is why the acquired bytes are returned alongside the
+/// requirements: a pack whose setup form asks for a tool's credential must not
+/// be able to ship without the tool.
 ///
 /// `pack_dir` must contain `pack.extensions.json`. `cache_dir` and `offline`
 /// are threaded through to [`acquire_extension_bytes`] for `store://` sources.
@@ -521,7 +638,7 @@ pub fn resolve_agent_tool_requirements(
     agents: &std::collections::BTreeMap<String, serde_json::Value>,
     cache_dir: &Path,
     offline: bool,
-) -> Result<std::collections::BTreeMap<String, Vec<crate::setup_gen::ToolSecretReq>>> {
+) -> Result<AgentToolResolution> {
     use std::collections::{BTreeMap, BTreeSet};
 
     // Collect extension_id -> set(tool_name) actually used across all agents.
@@ -554,7 +671,7 @@ pub fn resolve_agent_tool_requirements(
         }
     }
 
-    let mut out = BTreeMap::new();
+    let mut out = AgentToolResolution::default();
     for (ext_id, tool_names) in &used {
         // Reuse lookup_ext_dependency — it requires the #component fragment for
         // the parse_ext_ref validator even though we only need describe.json.
@@ -568,7 +685,13 @@ pub fn resolve_agent_tool_requirements(
         let names: Vec<String> = tool_names.iter().cloned().collect();
         let secret_requirements =
             crate::setup_gen::extract_tool_secret_requirements(&describe_bytes, &names)?;
-        out.insert(ext_id.clone(), secret_requirements);
+        out.secret_requirements
+            .insert(ext_id.clone(), secret_requirements);
+        out.archives.push(ResolvedExtensionArchive {
+            extension_id: ext_id.clone(),
+            entry_name: extension_archive_entry_name(ext_id),
+            bytes: zip_bytes,
+        });
     }
     Ok(out)
 }
@@ -660,6 +783,28 @@ mod non_extension_tool_ref_tests {
         assert!(!is_extension_tool_ref("sorla:my-pack"));
         assert!(!is_extension_tool_ref("component:oci://ghcr.io/x/y"));
         assert!(!is_extension_tool_ref("mcp:my-server"));
+        assert!(!is_extension_tool_ref("a2a:recipe"));
+    }
+
+    /// An agentic worker bound only to an external A2A agent aborted the build
+    /// with "resolve tool extension 'a2a:recipe'" — the same failure `flow:`
+    /// had, one tool kind later.
+    #[test]
+    fn a_worker_with_only_an_a2a_tool_needs_no_extensions_file() {
+        let agents = agent_with_tools(json!([
+            { "extension_id": "a2a:recipe", "tool_name": "ask" },
+        ]));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = resolve_agent_tool_requirements(dir.path(), &agents, dir.path(), true)
+            .expect("an a2a: tool ref must not require an extensions file");
+        assert!(
+            out.secret_requirements.is_empty(),
+            "an a2a: ref contributes no extension secret requirements"
+        );
+        assert!(
+            out.archives.is_empty(),
+            "an a2a: ref acquires no extension archive"
+        );
     }
 
     /// The regression this guards: a worker carrying only `flow:` tools used to
@@ -677,8 +822,12 @@ mod non_extension_tool_ref_tests {
         let out = resolve_agent_tool_requirements(dir.path(), &agents, dir.path(), true)
             .expect("non-extension tool refs must not require an extensions file");
         assert!(
-            out.is_empty(),
+            out.secret_requirements.is_empty(),
             "non-extension refs contribute no extension secret requirements"
+        );
+        assert!(
+            out.archives.is_empty(),
+            "non-extension refs contribute no extension archives"
         );
     }
 
@@ -699,6 +848,88 @@ mod non_extension_tool_ref_tests {
         assert!(
             !msg.contains("flow:get_weather"),
             "a skipped non-extension ref must never appear in the error; got: {msg}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod extension_archive_entry_name_tests {
+    use super::*;
+
+    #[test]
+    fn an_ordinary_id_is_used_verbatim() {
+        assert_eq!(
+            extension_archive_entry_name("greentic.tavily"),
+            "extensions/greentic.tavily.gtxpack"
+        );
+    }
+
+    #[test]
+    fn path_separators_cannot_escape_the_archive() {
+        for id in ["../../etc/passwd", "a\\b", "/abs/path", "C:evil"] {
+            let name = extension_archive_entry_name(id);
+            let rest = name
+                .strip_prefix(EXTENSION_ARCHIVE_PREFIX)
+                .expect("entry stays under the extensions/ prefix");
+            assert!(
+                !rest.contains('/') && !rest.contains('\\'),
+                "sanitised entry must have no further path components; got {name}"
+            );
+            assert!(
+                !rest.starts_with('.'),
+                "sanitised entry must not be hidden or a bare dot component; got {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn ids_that_sanitise_alike_still_get_distinct_entries() {
+        // `a/b` and `a:b` both sanitise to `a_b`; the digest suffix separates
+        // them, and neither can take the entry a genuine `a_b` would claim.
+        let slash = extension_archive_entry_name("a/b");
+        let colon = extension_archive_entry_name("a:b");
+        let plain = extension_archive_entry_name("a_b");
+        assert_ne!(slash, colon);
+        assert_ne!(slash, plain);
+        assert_ne!(colon, plain);
+        assert_eq!(plain, "extensions/a_b.gtxpack");
+    }
+
+    /// The counterexample that made the old `-` separator constructibly
+    /// collidable: `sha256("a/b")[..8]` is `c14cddc0`, and `a_b-c14cddc0` is a
+    /// perfectly legal id that the verbatim branch emits unchanged. With the
+    /// two branches sharing a separator both landed on one entry.
+    #[test]
+    fn a_lossy_name_cannot_be_forged_by_a_verbatim_id() {
+        let lossy = extension_archive_entry_name("a/b");
+        assert_eq!(lossy, "extensions/a_b~c14cddc0.gtxpack");
+        // The id that used to collide with it.
+        let verbatim = extension_archive_entry_name("a_b-c14cddc0");
+        assert_eq!(verbatim, "extensions/a_b-c14cddc0.gtxpack");
+        assert_ne!(lossy, verbatim);
+        // And it is not a one-off: no verbatim name can contain the marker at
+        // all, because sanitisation maps it away.
+        assert!(!verbatim.contains(LOSSY_MARKER));
+        assert!(
+            !extension_archive_entry_name("a_b~c14cddc0").contains("b~c"),
+            "an id literally containing the marker is itself lossy"
+        );
+    }
+
+    #[test]
+    fn an_id_that_sanitises_to_nothing_still_gets_a_name() {
+        let name = extension_archive_entry_name("..");
+        assert!(
+            name.starts_with("extensions/ext~") && name.ends_with(".gtxpack"),
+            "got {name}"
+        );
+    }
+
+    #[test]
+    fn the_name_is_deterministic() {
+        assert_eq!(
+            extension_archive_entry_name("vendor/ext"),
+            extension_archive_entry_name("vendor/ext")
         );
     }
 }

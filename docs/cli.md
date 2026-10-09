@@ -192,6 +192,35 @@ Example:
 greentic-pack doctor dist/weather-demo.gtpack
 ```
 
+#### Pack shapes
+
+`doctor` derives the archive's shape from its own top-level entry names before
+decoding anything, and reports which shape it found (see
+[pack-format.md](./pack-format.md#archive-shapes)). What it checks depends on
+the shape:
+
+**Canonical pack** (`manifest.cbor`) — unchanged: manifest decoding, SBOM
+consistency, signatures, referenced files, static routes, secret requirements,
+the pack-lock component doctor and the per-flow flow doctor.
+
+**DW application pack** (`manifest.json`, a greentic-designer export) —
+`manifest.json` schema (`manifest_id`, `manifest`, and the optional
+`display_name` / `locale` / `tenant` / `provider_overrides` types),
+`metadata.json` (`pack_id`, and the declared `kind` cross-checked against the
+derived shape), `flows/main.ygtc` through `greentic-flow doctor`, knowledge
+sidecar asset references in both directions, and archive entry paths.
+
+SBOM, signature, component lock, component manifests and static routes are
+**not** checked for a DW application pack — it carries none of them, so
+reporting them as missing would be noise. The report says so explicitly.
+
+**Neither shape** — a hard failure listing both shapes, the entry that decides
+each, and what the archive actually contains. Kind-awareness never turns a
+corrupt archive into a pass.
+
+`--format json` reports the shape in a top-level `archive_shape` field
+(`canonical`, `dw-application`).
+
 ### `plan`
 
 Generate a deployment plan from a pack archive or source directory.

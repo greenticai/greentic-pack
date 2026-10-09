@@ -4,7 +4,6 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -25,11 +24,26 @@ fn assert_cli_success(output: &Output, context: &str) {
     );
 }
 
+/// Build a `greentic-pack` command with the wizard delegate overrides cleared.
+///
+/// `GREENTIC_PACK_WIZARD_SELF_EXE`, `GREENTIC_FLOW_BIN`, and `GREENTIC_COMPONENT_BIN`
+/// point the wizard at stand-in delegate binaries. They must only ever be set on the
+/// child command: setting them on the test process leaks them into every other test
+/// spawned concurrently, which then delegates to a stub living in a sibling test's
+/// `TempDir` — already deleted by the time it runs.
+fn pack_cmd() -> Command {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"));
+    cmd.env_remove("GREENTIC_PACK_WIZARD_SELF_EXE")
+        .env_remove("GREENTIC_FLOW_BIN")
+        .env_remove("GREENTIC_COMPONENT_BIN");
+    cmd
+}
+
 #[test]
 fn wizard_run_emit_answers_writes_envelope() {
     let temp = TempDir::new().expect("tempdir");
     let answers_path = temp.path().join("answers.json");
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--schema-version")
@@ -71,7 +85,6 @@ fn wizard_run_emit_answers_writes_envelope() {
 
 #[test]
 fn wizard_run_emit_answers_records_extension_operation() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let answers_path = temp.path().join("extension_answers.json");
     let pack_dir = temp.path().join("control-pack");
@@ -80,7 +93,7 @@ fn wizard_run_emit_answers_records_extension_operation() {
         pack_dir.display()
     );
 
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--dry-run")
@@ -135,7 +148,7 @@ fn wizard_validate_with_migrate_reemits_document() {
     )
     .expect("write old answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("validate")
         .arg("--answers")
@@ -168,7 +181,6 @@ fn wizard_validate_with_migrate_reemits_document() {
 
 #[test]
 fn wizard_apply_answers_runs_pipeline() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let log_path = temp.path().join("calls.log");
     let self_exe = temp.path().join("greentic-pack-self");
@@ -194,19 +206,14 @@ fn wizard_apply_answers_runs_pipeline() {
     )
     .expect("write answers file");
 
-    unsafe {
-        std::env::set_var("GREENTIC_PACK_WIZARD_SELF_EXE", self_exe.as_os_str());
-    }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
+        .env("GREENTIC_PACK_WIZARD_SELF_EXE", &self_exe)
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
         .output()
         .expect("run wizard apply");
-    unsafe {
-        std::env::remove_var("GREENTIC_PACK_WIZARD_SELF_EXE");
-    }
     assert_cli_success(&output, "wizard apply should succeed");
 
     let calls = fs::read_to_string(&log_path).expect("read call log");
@@ -216,7 +223,6 @@ fn wizard_apply_answers_runs_pipeline() {
 
 #[test]
 fn wizard_apply_answers_with_sign_runs_sign_step() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let log_path = temp.path().join("calls.log");
     let self_exe = temp.path().join("greentic-pack-self");
@@ -248,19 +254,14 @@ fn wizard_apply_answers_with_sign_runs_sign_step() {
     )
     .expect("write answers file");
 
-    unsafe {
-        std::env::set_var("GREENTIC_PACK_WIZARD_SELF_EXE", self_exe.as_os_str());
-    }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
+        .env("GREENTIC_PACK_WIZARD_SELF_EXE", &self_exe)
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
         .output()
         .expect("run wizard apply");
-    unsafe {
-        std::env::remove_var("GREENTIC_PACK_WIZARD_SELF_EXE");
-    }
     assert_cli_success(&output, "wizard apply should succeed");
 
     let calls = fs::read_to_string(&log_path).expect("read call log");
@@ -271,7 +272,6 @@ fn wizard_apply_answers_with_sign_runs_sign_step() {
 
 #[test]
 fn wizard_apply_answers_stage_asset_file_into_pack() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let source_dir = temp.path().join("external");
@@ -310,14 +310,11 @@ fn wizard_apply_answers_stage_asset_file_into_pack() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
-        .env_remove("GREENTIC_PACK_WIZARD_SELF_EXE")
-        .env_remove("GREENTIC_FLOW_BIN")
-        .env_remove("GREENTIC_COMPONENT_BIN")
         .output()
         .expect("run wizard apply");
     assert_cli_success(&output, "wizard apply should succeed");
@@ -414,7 +411,7 @@ fn wizard_apply_answers_stage_asset_directory_recursively() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -469,7 +466,7 @@ fn wizard_apply_answers_reject_asset_staging_outside_pack_root() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -514,7 +511,7 @@ fn wizard_apply_answers_reject_missing_asset_source() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -588,29 +585,23 @@ fn wizard_asset_staging_can_feed_followup_build_without_shell_copying() {
     )
     .expect("write answers");
 
-    let apply = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let apply = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
         .current_dir(workspace_root())
-        .env_remove("GREENTIC_PACK_WIZARD_SELF_EXE")
-        .env_remove("GREENTIC_FLOW_BIN")
-        .env_remove("GREENTIC_COMPONENT_BIN")
         .output()
         .expect("run wizard apply");
     assert!(apply.status.success(), "wizard apply should succeed");
 
-    let build = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let build = pack_cmd()
         .arg("build")
         .arg("--in")
         .arg(&pack_dir)
         .arg("--log")
         .arg("warn")
         .current_dir(workspace_root())
-        .env_remove("GREENTIC_PACK_WIZARD_SELF_EXE")
-        .env_remove("GREENTIC_FLOW_BIN")
-        .env_remove("GREENTIC_COMPONENT_BIN")
         .output()
         .expect("run build");
     assert!(
@@ -690,15 +681,12 @@ fn wizard_asset_staging_resolves_relative_sources_from_answers_file_directory() 
         ]),
     );
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .current_dir(workspace_root())
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
-        .env_remove("GREENTIC_PACK_WIZARD_SELF_EXE")
-        .env_remove("GREENTIC_FLOW_BIN")
-        .env_remove("GREENTIC_COMPONENT_BIN")
         .output()
         .expect("run wizard apply");
     assert_cli_success(&output, "wizard apply should succeed");
@@ -1163,7 +1151,6 @@ fn wizard_asset_staging_partial_failure_is_fail_fast_and_keeps_prior_copies() {
 
 #[test]
 fn wizard_validate_answers_is_side_effect_free() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let log_path = temp.path().join("calls.log");
     let self_exe = temp.path().join("greentic-pack-self");
@@ -1189,19 +1176,14 @@ fn wizard_validate_answers_is_side_effect_free() {
     )
     .expect("write answers file");
 
-    unsafe {
-        std::env::set_var("GREENTIC_PACK_WIZARD_SELF_EXE", self_exe.as_os_str());
-    }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
+        .env("GREENTIC_PACK_WIZARD_SELF_EXE", &self_exe)
         .arg("wizard")
         .arg("validate")
         .arg("--answers")
         .arg(&answers_path)
         .output()
         .expect("run wizard validate");
-    unsafe {
-        std::env::remove_var("GREENTIC_PACK_WIZARD_SELF_EXE");
-    }
     assert!(output.status.success(), "wizard validate should succeed");
     assert!(
         !log_path.exists()
@@ -1214,7 +1196,6 @@ fn wizard_validate_answers_is_side_effect_free() {
 
 #[test]
 fn wizard_run_with_answers_executes_apply_flow() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let log_path = temp.path().join("calls.log");
     let self_exe = temp.path().join("greentic-pack-self");
@@ -1240,19 +1221,14 @@ fn wizard_run_with_answers_executes_apply_flow() {
     )
     .expect("write answers file");
 
-    unsafe {
-        std::env::set_var("GREENTIC_PACK_WIZARD_SELF_EXE", self_exe.as_os_str());
-    }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
+        .env("GREENTIC_PACK_WIZARD_SELF_EXE", &self_exe)
         .arg("wizard")
         .arg("run")
         .arg("--answers")
         .arg(&answers_path)
         .output()
         .expect("run wizard run --answers");
-    unsafe {
-        std::env::remove_var("GREENTIC_PACK_WIZARD_SELF_EXE");
-    }
     assert!(
         output.status.success(),
         "wizard run --answers should succeed"
@@ -1270,7 +1246,7 @@ fn wizard_validate_missing_schema_without_migrate_fails() {
     fs::write(&input_path, r#"{"answers":{"pack_dir":"."},"locks":{}}"#)
         .expect("write old answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("validate")
         .arg("--answers")
@@ -1302,7 +1278,7 @@ fn wizard_validate_schema_mismatch_without_migrate_fails() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("validate")
         .arg("--answers")
@@ -1337,7 +1313,7 @@ fn wizard_validate_schema_mismatch_with_migrate_succeeds() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("validate")
         .arg("--answers")
@@ -1385,7 +1361,7 @@ fn wizard_validate_rejects_wrong_wizard_id() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("validate")
         .arg("--answers")
@@ -1417,7 +1393,7 @@ fn wizard_run_with_invalid_answers_file_writes_localized_error_and_continues() {
     )
     .expect("write invalid answers file");
 
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("--answers")
         .arg(&answers_path)
@@ -1450,7 +1426,6 @@ fn wizard_run_with_invalid_answers_file_writes_localized_error_and_continues() {
 
 #[test]
 fn wizard_run_dry_run_records_choices_without_side_effects() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let answers_path = temp.path().join("dry_run_answers.json");
@@ -1498,7 +1473,7 @@ exit 0
         "2\n{}\n1\n2\n2\n2\n3\n2\n4\n./demo-sign.pem\nM\n0\n",
         pack_dir.display()
     );
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--dry-run")
@@ -1594,7 +1569,6 @@ exit 0
 
 #[test]
 fn wizard_apply_replays_recorded_delegate_and_pipeline_actions() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let log_path = temp.path().join("calls.log");
@@ -1649,23 +1623,16 @@ fn wizard_apply_replays_recorded_delegate_and_pipeline_actions() {
     )
     .expect("write answers");
 
-    unsafe {
-        std::env::set_var("GREENTIC_PACK_WIZARD_SELF_EXE", self_exe.as_os_str());
-        std::env::set_var("GREENTIC_FLOW_BIN", flow_exe.as_os_str());
-        std::env::set_var("GREENTIC_COMPONENT_BIN", component_exe.as_os_str());
-    }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
+        .env("GREENTIC_PACK_WIZARD_SELF_EXE", &self_exe)
+        .env("GREENTIC_FLOW_BIN", &flow_exe)
+        .env("GREENTIC_COMPONENT_BIN", &component_exe)
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
         .output()
         .expect("run wizard apply");
-    unsafe {
-        std::env::remove_var("GREENTIC_PACK_WIZARD_SELF_EXE");
-        std::env::remove_var("GREENTIC_FLOW_BIN");
-        std::env::remove_var("GREENTIC_COMPONENT_BIN");
-    }
     assert_cli_success(&output, "wizard apply should succeed");
 
     let calls = fs::read_to_string(&log_path).expect("read call log");
@@ -1678,7 +1645,6 @@ fn wizard_apply_replays_recorded_delegate_and_pipeline_actions() {
 
 #[test]
 fn wizard_apply_with_nested_answers_can_scaffold_and_replay_subwizards() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("new-pack");
     let log_path = temp.path().join("calls.log");
@@ -1760,23 +1726,16 @@ exit 0\n",
     )
     .expect("write answers");
 
-    unsafe {
-        std::env::set_var("GREENTIC_PACK_WIZARD_SELF_EXE", self_exe.as_os_str());
-        std::env::set_var("GREENTIC_FLOW_BIN", flow_exe.as_os_str());
-        std::env::set_var("GREENTIC_COMPONENT_BIN", component_exe.as_os_str());
-    }
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
+        .env("GREENTIC_PACK_WIZARD_SELF_EXE", &self_exe)
+        .env("GREENTIC_FLOW_BIN", &flow_exe)
+        .env("GREENTIC_COMPONENT_BIN", &component_exe)
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
         .arg(&answers_path)
         .output()
         .expect("run wizard apply");
-    unsafe {
-        std::env::remove_var("GREENTIC_PACK_WIZARD_SELF_EXE");
-        std::env::remove_var("GREENTIC_FLOW_BIN");
-        std::env::remove_var("GREENTIC_COMPONENT_BIN");
-    }
     assert_cli_success(&output, "wizard apply should succeed");
     assert!(pack_dir.is_dir(), "apply should scaffold pack directory");
 
@@ -1807,7 +1766,6 @@ exit 0\n",
 
 #[test]
 fn wizard_apply_control_extension_answers_is_deterministic() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("control-pack");
     let answers_path = temp.path().join("control_answers.json");
@@ -1853,7 +1811,7 @@ fn wizard_apply_control_extension_answers_is_deterministic() {
     )
     .expect("write answers");
 
-    let first = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let first = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -1875,7 +1833,7 @@ fn wizard_apply_control_extension_answers_is_deterministic() {
     assert!(pack_yaml_before.contains("greentic.ext.capabilities.v1"));
     assert!(pack_yaml_before.contains("offers: []"));
 
-    let second = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let second = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -1899,7 +1857,6 @@ fn wizard_apply_control_extension_answers_is_deterministic() {
 
 #[test]
 fn wizard_apply_runtime_capability_answers_scaffolds_replayable_pack() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("runtime-pack");
     let answers_path = temp.path().join("runtime_answers.json");
@@ -1946,7 +1903,7 @@ fn wizard_apply_runtime_capability_answers_scaffolds_replayable_pack() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -1968,7 +1925,6 @@ fn wizard_apply_runtime_capability_answers_scaffolds_replayable_pack() {
 
 #[test]
 fn wizard_apply_contract_answers_scaffolds_contract_assets() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("contract-pack");
     let answers_path = temp.path().join("contract_answers.json");
@@ -2015,7 +1971,7 @@ fn wizard_apply_contract_answers_scaffolds_contract_assets() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -2045,7 +2001,6 @@ fn wizard_apply_contract_answers_scaffolds_contract_assets() {
 
 #[test]
 fn wizard_apply_ops_answers_scaffolds_ops_bundle() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("ops-pack");
     let answers_path = temp.path().join("ops_answers.json");
@@ -2092,7 +2047,7 @@ fn wizard_apply_ops_answers_scaffolds_ops_bundle() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -2117,7 +2072,6 @@ fn wizard_apply_ops_answers_scaffolds_ops_bundle() {
 
 #[test]
 fn wizard_run_dry_run_then_apply_deployer_destroy_answers_succeeds() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let answers_path = temp.path().join("pack-wizard-sample.json");
     let pack_dir = temp.path().join("deploy-test");
@@ -2126,7 +2080,7 @@ fn wizard_run_dry_run_then_apply_deployer_destroy_answers_succeeds() {
         pack_dir.display()
     );
 
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--dry-run")
@@ -2146,7 +2100,7 @@ fn wizard_run_dry_run_then_apply_deployer_destroy_answers_succeeds() {
     let output = child.wait_with_output().expect("wait output");
     assert!(output.status.success(), "wizard run should succeed");
 
-    let apply = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let apply = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -2165,7 +2119,6 @@ fn wizard_run_dry_run_then_apply_deployer_destroy_answers_succeeds() {
 
 #[test]
 fn wizard_apply_deployer_legacy_remove_answers_fail() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("legacy-deployer-pack");
     let answers_path = temp.path().join("legacy_deployer_answers.json");
@@ -2205,7 +2158,7 @@ fn wizard_apply_deployer_legacy_remove_answers_fail() {
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -2226,7 +2179,6 @@ fn wizard_apply_deployer_legacy_remove_answers_fail() {
 
 #[test]
 fn wizard_dry_run_flow_child_exit_returns_gracefully_to_pack_menu() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let answers_path = temp.path().join("answers.json");
     let self_exe = temp.path().join("greentic-pack-self");
@@ -2242,7 +2194,7 @@ fn wizard_dry_run_flow_child_exit_returns_gracefully_to_pack_menu() {
         "1\nmy-pack\n{}\n1\n0\n0\n",
         temp.path().join("pack").display()
     );
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--dry-run")
@@ -2269,7 +2221,6 @@ fn wizard_dry_run_flow_child_exit_returns_gracefully_to_pack_menu() {
 
 #[test]
 fn wizard_dry_run_component_child_exit_returns_gracefully_to_pack_menu() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let answers_path = temp.path().join("answers.json");
     let self_exe = temp.path().join("greentic-pack-self");
@@ -2285,7 +2236,7 @@ fn wizard_dry_run_component_child_exit_returns_gracefully_to_pack_menu() {
         "1\nmy-pack\n{}\n2\n0\n0\n",
         temp.path().join("pack").display()
     );
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--dry-run")
@@ -2312,7 +2263,6 @@ fn wizard_dry_run_component_child_exit_returns_gracefully_to_pack_menu() {
 
 #[test]
 fn wizard_dry_run_export_and_replay_constructs_pack_flow_component() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("target-pack");
     let answers_path = temp.path().join("dry_run_answers.json");
@@ -2369,7 +2319,7 @@ exit 0\n",
     );
 
     let input = format!("1\nmy-pack\n{}\n1\n2\n3\n2\n0\n", pack_dir.display());
-    let mut child = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let mut child = pack_cmd()
         .arg("wizard")
         .arg("run")
         .arg("--dry-run")
@@ -2441,7 +2391,7 @@ exit 0\n",
         Some("dry-run")
     );
 
-    let apply_output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let apply_output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -2462,7 +2412,6 @@ exit 0\n",
 
 #[test]
 fn wizard_schema_embeds_pack_flow_and_component_contracts() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let flow_exe = temp.path().join("greentic-flow");
     let component_exe = temp.path().join("greentic-component");
@@ -2489,7 +2438,7 @@ printf '{"title":"component-%s","type":"object","properties":{"answers":{"type":
 "#,
     );
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("--schema")
         .env("GREENTIC_FLOW_BIN", &flow_exe)
@@ -2601,7 +2550,6 @@ printf '{"title":"component-%s","type":"object","properties":{"answers":{"type":
 
 #[test]
 fn wizard_schema_with_answers_uses_pack_specific_flow_schema_and_dev_overrides() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let answers_path = temp.path().join("answers.json");
@@ -2680,7 +2628,7 @@ printf '{{"title":"component-%s","type":"object"}}\n' "$mode"
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("--schema")
         .arg("--answers")
@@ -2710,7 +2658,6 @@ printf '{{"title":"component-%s","type":"object"}}\n' "$mode"
 
 #[test]
 fn wizard_apply_replays_nested_flow_step_and_component_answers_without_dropping_them() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let answers_path = temp.path().join("answers.json");
@@ -2830,7 +2777,7 @@ exit 0
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -2923,7 +2870,6 @@ exit 0
 
 #[test]
 fn wizard_apply_wraps_simple_component_wizard_answers_for_qa_replay() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let answers_path = temp.path().join("answers.json");
@@ -2974,7 +2920,7 @@ exit 0
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3009,7 +2955,6 @@ exit 0
 
 #[test]
 fn wizard_apply_component_delegate_failure_prints_replay_json() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let answers_path = temp.path().join("answers.json");
@@ -3052,7 +2997,7 @@ exit 1
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3071,7 +3016,6 @@ exit 1
 
 #[test]
 fn wizard_apply_rejects_custom_component_operation_names_before_delegate() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let answers_path = temp.path().join("answers.json");
@@ -3122,7 +3066,7 @@ exit 0
     )
     .expect("write answers");
 
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3144,7 +3088,6 @@ exit 0
 
 #[test]
 fn wizard_apply_selected_actions_can_infer_update_extension_operation() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let create_answers = temp.path().join("create.json");
@@ -3171,7 +3114,7 @@ fn wizard_apply_selected_actions_can_infer_update_extension_operation() {
         .expect("serialize create answers"),
     )
     .expect("write create answers");
-    let create_output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let create_output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3217,7 +3160,7 @@ fn wizard_apply_selected_actions_can_infer_update_extension_operation() {
         .expect("serialize update answers"),
     )
     .expect("write update answers");
-    let update_output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let update_output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3234,7 +3177,6 @@ fn wizard_apply_selected_actions_can_infer_update_extension_operation() {
 
 #[test]
 fn wizard_apply_messaging_webchat_gui_writes_provider_extension_entry() {
-    let _guard = env_guard();
     let temp = TempDir::new().expect("tempdir");
     let pack_dir = temp.path().join("pack");
     let create_answers = temp.path().join("create.json");
@@ -3261,7 +3203,7 @@ fn wizard_apply_messaging_webchat_gui_writes_provider_extension_entry() {
         .expect("serialize create answers"),
     )
     .expect("write create answers");
-    let create_output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let create_output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3298,7 +3240,7 @@ fn wizard_apply_messaging_webchat_gui_writes_provider_extension_entry() {
         .expect("serialize update answers"),
     )
     .expect("write update answers");
-    let update_output = Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    let update_output = pack_cmd()
         .arg("wizard")
         .arg("apply")
         .arg("--answers")
@@ -3660,15 +3602,12 @@ fn write_asset_answers(answers_path: &Path, pack_dir: &Path, asset_staging: Valu
 }
 
 fn run_wizard_answers(command: &str, answers_path: &Path) -> std::process::Output {
-    Command::new(assert_cmd::cargo::cargo_bin!("greentic-pack"))
+    pack_cmd()
         .current_dir(workspace_root())
         .arg("wizard")
         .arg(command)
         .arg("--answers")
         .arg(answers_path)
-        .env_remove("GREENTIC_PACK_WIZARD_SELF_EXE")
-        .env_remove("GREENTIC_FLOW_BIN")
-        .env_remove("GREENTIC_COMPONENT_BIN")
         .output()
         .expect("run wizard command")
 }
@@ -3699,16 +3638,4 @@ fn default_catalog_ref() -> String {
             .join("extensions_capability_packs.catalog.v1.json")
             .display()
     )
-}
-
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn env_guard() -> MutexGuard<'static, ()> {
-    match env_lock().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
 }

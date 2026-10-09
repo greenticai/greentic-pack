@@ -22,6 +22,7 @@ use x509_parser::pem::parse_x509_pem;
 use x509_parser::prelude::*;
 use zip::ZipArchive;
 
+use crate::archive_shape::{CANONICAL_MANIFEST_ENTRY, non_canonical_archive_message};
 use crate::builder::{
     ComponentEntry, FlowEntry, ImportRef, PackManifest, PackMeta, SBOM_FORMAT,
     SIGNATURE_CHAIN_PATH, SIGNATURE_PATH, SbomEntry, SignatureEnvelope, hex_hash,
@@ -359,7 +360,28 @@ impl PackLoad {
     }
 }
 
-fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
+/// Every entry of a `.gtpack`, read with the archive's safety checks applied.
+///
+/// Shape-agnostic on purpose: this performs no manifest lookup and no decoding,
+/// so a reader for any pack shape can start from it instead of re-implementing
+/// zip hygiene. [`read_archive_entries`] already rejects non-regular files,
+/// unsafe or traversing paths, duplicate entries and oversized files; the
+/// archive-wide size cap is applied here.
+#[derive(Debug, Clone)]
+pub struct PackArchiveEntries {
+    pub files: HashMap<String, Vec<u8>>,
+    pub total_bytes: u64,
+}
+
+impl PackArchiveEntries {
+    /// The entry names, as [`crate::archive_shape::detect_archive_shape`] wants them.
+    pub fn entry_names(&self) -> std::collections::BTreeSet<String> {
+        self.files.keys().cloned().collect()
+    }
+}
+
+/// Open a `.gtpack` and read every entry, without assuming any pack shape.
+pub fn read_pack_archive(path: &Path) -> Result<PackArchiveEntries> {
     let mut archive = ZipArchive::new(
         File::open(path).with_context(|| format!("failed to open {}", path.display()))?,
     )
@@ -375,10 +397,23 @@ fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
         );
     }
 
+    Ok(PackArchiveEntries {
+        files,
+        total_bytes: total,
+    })
+}
+
+fn open_pack_inner(path: &Path, policy: SigningPolicy) -> Result<PackLoad> {
+    let files = read_pack_archive(path)?.files;
+
     let manifest_bytes = files
-        .get("manifest.cbor")
+        .get(CANONICAL_MANIFEST_ENTRY)
         .cloned()
-        .ok_or_else(|| anyhow!("manifest.cbor missing from archive"))?;
+        .ok_or_else(|| {
+            anyhow!(non_canonical_archive_message(
+                &files.keys().cloned().collect()
+            ))
+        })?;
     let decoded_gpack_manifest = decode_pack_manifest(&manifest_bytes).ok();
     match decode_manifest(&manifest_bytes).context("manifest.cbor is invalid")? {
         ManifestModel::Pack(manifest) => {
@@ -1003,6 +1038,7 @@ fn convert_gpack_manifest(
         components,
         distribution: None,
         component_descriptors: Vec::new(),
+        extensions: None,
     }
 }
 

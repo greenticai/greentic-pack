@@ -148,6 +148,9 @@ mod tests {
             script.to_str().expect("script path"),
         )
         .expect_err("failing build should error");
-        assert!(err.to_string().contains("packc build failed with status"));
+        assert!(
+            err.to_string().contains("packc build failed with status"),
+            "ERR={err:?} / {err}"
+        );
     }
 }
