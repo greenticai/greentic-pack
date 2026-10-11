@@ -26,7 +26,7 @@ include = [
 struct_marked_non_exhaustive = "allow"
 
 [package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.tgz"
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.{ archive-format }"
 pkg-fmt = "tgz"
 bin-dir = "{ name }-v{ version }-{ target }/{ bin }{ binary-ext }"
 targets = [
@@ -37,6 +37,16 @@ targets = [
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
 ]
+
+# The release workflow publishes Windows archives as .zip (windows-archive-format
+# in release-binaries.yml). Without these overrides cargo-binstall looks for a
+# .tgz that does not exist, falls back to `cargo install`, and that collides with
+# an already-installed greentic-pack.exe.
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [features]
 default = []
