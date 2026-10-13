@@ -145,7 +145,14 @@ const BUILTIN_KINDS: &[&str] = &[
 ///
 /// Note the deliberate asymmetry with its own sibling `flow.call`, whose prefix
 /// entry predates that hazard being understood, and is not a precedent to copy.
-const BUILTIN_EXACT_KINDS: &[&str] = &["mcp", "var.set", "telco-x.call", "flow.goto", "a2a"];
+const BUILTIN_EXACT_KINDS: &[&str] = &[
+    "mcp",
+    "var.set",
+    "telco-x.call",
+    "flow.goto",
+    "a2a",
+    "media.create",
+];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
 /// no pack component to resolve). Accepts both the bare kind (`dw.agent`) and
@@ -269,6 +276,22 @@ mod tests {
     #[test]
     fn a2a_is_exact_match_only() {
         for id in ["a2a.custom", "a2a.call", "a2aa", "a2"] {
+            assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
+    /// `media.create` is the runner's native "create a file" node
+    /// (engine-dispatched), so there is no pack component to resolve.
+    #[test]
+    fn bare_media_create_is_builtin() {
+        assert!(is_builtin_component_id("media.create"));
+    }
+
+    /// Exact-match only: a prefix entry would capture a `media.create.*`
+    /// adapter component and silently drop it from the pack.
+    #[test]
+    fn media_create_is_exact_match_only() {
+        for id in ["media.create.extra", "media.creator", "media", "media.cre"] {
             assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
         }
     }
