@@ -29,6 +29,13 @@ nodes:
   gate:
     approval.call:
       reason: "confirm"
+    routing:
+      - to: make_file
+  make_file:
+    media.create:
+      format: txt
+      name: "Summary"
+      text: "{{in.text}}"
     routing: out
 "#;
 
@@ -109,6 +116,7 @@ fn build_keeps_runtime_native_call_nodes_without_resolve_mapping() {
         Some("orders")
     );
     assert_eq!(node("gate").component.id.as_str(), "approval.call");
+    assert_eq!(node("make_file").component.id.as_str(), "media.create");
     assert!(
         manifest.components.is_empty(),
         "no pack component may be demanded for a runtime-native node: {:?}",
