@@ -152,6 +152,7 @@ const BUILTIN_EXACT_KINDS: &[&str] = &[
     "flow.goto",
     "a2a",
     "media.create",
+    "knowledge.search",
 ];
 
 /// Whether a component-id string names a runner builtin (engine-handled, with
@@ -292,6 +293,29 @@ mod tests {
     #[test]
     fn media_create_is_exact_match_only() {
         for id in ["media.create.extra", "media.creator", "media", "media.cre"] {
+            assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
+        }
+    }
+
+    /// `knowledge.search` is the runner's native retrieval node
+    /// (greentic-runner#899, engine-dispatched through the knowledge port), so
+    /// there is no pack component to resolve. Without this entry a flow with one
+    /// failed `build` with "missing resolve summary entries".
+    #[test]
+    fn bare_knowledge_search_is_builtin() {
+        assert!(is_builtin_component_id("knowledge.search"));
+    }
+
+    /// Exact-match only: a prefix entry would capture a `knowledge.search.*`
+    /// adapter component and silently drop it from the pack.
+    #[test]
+    fn knowledge_search_is_exact_match_only() {
+        for id in [
+            "knowledge.search.extra",
+            "knowledge.searcher",
+            "knowledge",
+            "knowledge.sear",
+        ] {
             assert!(!is_builtin_component_id(id), "{id} must NOT be builtin");
         }
     }
